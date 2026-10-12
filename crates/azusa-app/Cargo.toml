@@ -1,0 +1,12 @@
+[package]
+name = "azusa-app"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+eframe.workspace = true
+azusa-core.workspace = true
+
+[[bin]]
+name = "azusa"
+path = "src/main.rs"
