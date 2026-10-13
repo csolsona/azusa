@@ -10,3 +10,6 @@ azusa-core.workspace = true
 [[bin]]
 name = "azusa"
 path = "src/main.rs"
+
+[lints]
+workspace = true
