@@ -9,3 +9,5 @@ workspace = true
 [dependencies]
 thiserror.workspace = true
 tiny_http.workspace = true
+serde.workspace = true
+ureq.workspace = true

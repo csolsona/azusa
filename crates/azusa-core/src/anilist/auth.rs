@@ -1,12 +1,70 @@
+use std::time::Duration;
+use tiny_http::{Header, Response, Server};
+
+use crate::anilist::Error;
+
 const CLIENT_ID: &str = "41998";
+
+// The browser never sends the URL fragment to the server, so we bounce it into a query string.
+const CALLBACK_HTML: &str =
+	"<script>location.replace('/token?' + location.hash.slice(1));</script>";
+
+pub struct AccessToken(pub(super) String);
+
+/// Local HTTP server listening on the `AniList` redirect URL.
+pub struct LoginServer(Server);
+
+impl LoginServer {
+	/// Binds the local server so the browser redirect has somewhere to land.
+	///
+	/// # Errors
+	/// [`Error::Bind`] if port 27279 is taken.
+	pub fn bind() -> Result<Self, Error> {
+		// Must match the redirect URL registered in the AniList client settings.
+		let server = Server::http("127.0.0.1:27279").map_err(Error::Bind)?;
+		Ok(Self(server))
+	}
+
+	/// Blocks until the browser delivers the `AniList` token.
+	///
+	/// # Errors
+	/// [`Error::Timeout`] after 5 minutes without login, [`Error::Io`] if the HTTP exchange fails.
+	///
+	/// # Panics
+	/// Never in practice: the only `expect` is on a static, valid header.
+	pub fn wait_for_token(self) -> Result<AccessToken, Error> {
+		loop {
+			let Some(request) = self.0.recv_timeout(Duration::from_secs(300))? else {
+				return Err(Error::Timeout);
+			};
+
+			if let Some(token) = token_from_path(request.url()) {
+				// The token is already received; failing to show the confirmation page shouldn't fail the login.
+				let _ = request.respond(Response::from_string(
+					"Login complete, you can close this tab.",
+				));
+				return Ok(token);
+			}
+
+			if request.url() == "/callback" {
+				request.respond(
+					Response::from_string(CALLBACK_HTML).with_header(
+						Header::from_bytes("Content-Type", "text/html; charset=utf-8")
+							.expect("static header is valid"),
+					),
+				)?;
+			} else {
+				request.respond(Response::from_string("Not found").with_status_code(404))?;
+			}
+		}
+	}
+}
 
 /// Builds the `AniList` OAuth implicit-grant authorization URL.
 #[must_use]
 pub fn authorize_url() -> String {
 	format!("https://anilist.co/api/v2/oauth/authorize?client_id={CLIENT_ID}&response_type=token")
 }
-
-pub struct AccessToken(String);
 
 // /token?access_token=abc&token_type=Bearer&expires_in=31536000
 fn token_from_path(path: &str) -> Option<AccessToken> {
@@ -15,70 +73,6 @@ fn token_from_path(path: &str) -> Option<AccessToken> {
 		.find_map(|pair| pair.strip_prefix("access_token="))
 		.filter(|token| !token.is_empty())
 		.map(|token| AccessToken(token.to_owned()))
-}
-
-/// Local HTTP server listening on the `AniList` redirect URL.
-pub struct LoginServer(tiny_http::Server);
-
-impl LoginServer {
-	/// Binds the local server so the browser redirect has somewhere to land.
-	///
-	/// # Errors
-	/// [`AuthError::Bind`] if port 27279 is taken.
-	pub fn bind() -> Result<Self, AuthError> {
-		// Must match the redirect URL registered in the AniList client settings.
-		let server = tiny_http::Server::http("127.0.0.1:27279").map_err(AuthError::Bind)?;
-		Ok(Self(server))
-	}
-
-	/// Blocks until the browser delivers the `AniList` token.
-	///
-	/// # Errors
-	/// [`AuthError::Timeout`] after 5 minutes without login, [`AuthError::Io`] if the HTTP exchange fails.
-	///
-	/// # Panics
-	/// Never in practice: the only `expect` is on a static, valid header.
-	pub fn wait_for_token(self) -> Result<AccessToken, AuthError> {
-		loop {
-			let Some(request) = self.0.recv_timeout(std::time::Duration::from_secs(300))? else {
-				return Err(AuthError::Timeout);
-			};
-
-			if let Some(token) = token_from_path(request.url()) {
-				// The token is already received; failing to show the confirmation page shouldn't fail the login.
-				let _ = request.respond(tiny_http::Response::from_string(
-					"Login complete, you can close this tab.",
-				));
-				return Ok(token);
-			}
-
-			if request.url() == "/callback" {
-				request.respond(
-					tiny_http::Response::from_string(CALLBACK_HTML).with_header(
-						tiny_http::Header::from_bytes("Content-Type", "text/html; charset=utf-8")
-							.expect("static header is valid"),
-					),
-				)?;
-			} else {
-				request
-					.respond(tiny_http::Response::from_string("Not found").with_status_code(404))?;
-			}
-		}
-	}
-}
-
-// The browser never sends the URL fragment to the server, so we bounce it into a query string.
-const CALLBACK_HTML: &str =
-	"<script>location.replace('/token?' + location.hash.slice(1));</script>";
-
-#[derive(Debug, thiserror::Error)]
-pub enum AuthError {
-	#[error("could not start local server: {0}")]
-	Bind(#[source] Box<dyn std::error::Error + Send + Sync>),
-	#[error("login timed out")]
-	Timeout,
-	#[error("local server I/O failed: {0}")]
-	Io(#[from] std::io::Error),
 }
 
 #[cfg(test)]
