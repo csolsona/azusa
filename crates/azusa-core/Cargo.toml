@@ -9,5 +9,9 @@ workspace = true
 [dependencies]
 thiserror.workspace = true
 tiny_http.workspace = true
-serde.workspace = true
 ureq.workspace = true
+log.workspace = true
+cynic.workspace = true
+
+[build-dependencies]
+cynic-codegen.workspace = true

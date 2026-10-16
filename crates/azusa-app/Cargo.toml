@@ -4,8 +4,9 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
-eframe.workspace = true
 azusa-core.workspace = true
+eframe.workspace = true
+env_logger.workspace = true
 
 [[bin]]
 name = "azusa"

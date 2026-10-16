@@ -1,14 +1,17 @@
 use std::sync::mpsc;
 
-use azusa_core::anilist::{self, Session};
+use azusa_core::anilist::{self, MediaListGroup, Session};
 use eframe::egui;
 
 #[derive(Default)]
 enum AuthState {
 	#[default]
 	LoggedOut,
-	Waiting(mpsc::Receiver<Result<Session, anilist::Error>>),
-	LoggedIn(Session),
+	Waiting(mpsc::Receiver<Result<(Session, Vec<MediaListGroup>), anilist::Error>>),
+	LoggedIn {
+		session: Session,
+		lists: Vec<MediaListGroup>,
+	},
 	Failed(anilist::Error),
 }
 
@@ -31,7 +34,15 @@ impl AzusaApp {
 		let (tx, rx) = mpsc::channel();
 		let thread_ctx = ctx.clone();
 		std::thread::spawn(move || {
-			let _ = tx.send(server.wait_for_token().and_then(Session::start));
+			let _ = tx.send(
+				server
+					.wait_for_token()
+					.and_then(Session::start)
+					.and_then(|session| {
+						let lists = session.anime_lists()?;
+						Ok((session, lists))
+					}),
+			);
 			thread_ctx.request_repaint();
 		});
 
@@ -46,7 +57,7 @@ impl eframe::App for AzusaApp {
 			&& let Ok(result) = rx.try_recv()
 		{
 			self.auth = match result {
-				Ok(session) => AuthState::LoggedIn(session),
+				Ok((session, lists)) => AuthState::LoggedIn { session, lists },
 				Err(err) => AuthState::Failed(err),
 			};
 		}
@@ -66,8 +77,13 @@ impl eframe::App for AzusaApp {
 						ui.label("Waiting for the browser…");
 					});
 				}
-				AuthState::LoggedIn(session) => {
-					ui.label(format!("Welcome, {}", session.viewer.name));
+				AuthState::LoggedIn { session, lists } => {
+					ui.label(format!(
+						"Welcome, {}, ({}). Total anime on list: {}",
+						session.viewer.name,
+						session.viewer.id,
+						lists.iter().map(|group| group.entries.len()).sum::<usize>()
+					));
 				}
 				AuthState::Failed(err) => {
 					ui.colored_label(ui.visuals().error_fg_color, err.to_string());

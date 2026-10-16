@@ -8,4 +8,8 @@ pub enum Error {
 	Io(#[from] std::io::Error),
 	#[error("AniList request failed: {0}")]
 	Http(#[from] ureq::Error),
+	#[error("AniList returned errors: {0:?}")]
+	GraphQl(Vec<cynic::GraphQlError>),
+	#[error("AniList response had no data")]
+	MissingData,
 }
