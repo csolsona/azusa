@@ -9,6 +9,7 @@ edition = "2024"
 [workspace.dependencies]
 azusa-core = { path = "crates/azusa-core" }
 eframe = "0.37"
+egui_extras = "0.37"
 thiserror = "2"
 tiny_http = "0.12.0"
 ureq = { version = "3", features = ["json"] }

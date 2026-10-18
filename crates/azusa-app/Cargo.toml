@@ -6,6 +6,7 @@ version.workspace = true
 [dependencies]
 azusa-core.workspace = true
 eframe.workspace = true
+egui_extras.workspace = true
 env_logger.workspace = true
 
 [[bin]]

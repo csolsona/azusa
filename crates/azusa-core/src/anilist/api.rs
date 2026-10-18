@@ -48,6 +48,7 @@ pub struct MediaListGroup {
 	#[cynic(flatten)]
 	pub entries: Vec<MediaList>,
 	pub is_custom_list: Option<bool>,
+	pub status: Option<MediaListStatus>,
 }
 
 #[derive(cynic::QueryFragment)]

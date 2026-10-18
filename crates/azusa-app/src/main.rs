@@ -11,7 +11,7 @@ fn main() -> eframe::Result {
 	env_logger::init();
 
 	let options = eframe::NativeOptions {
-		viewport: egui::ViewportBuilder::default().with_inner_size([480.0, 320.0]),
+		viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 700.0]),
 		..Default::default()
 	};
 
