@@ -1,7 +1,9 @@
 use std::sync::mpsc;
 
-use azusa_core::anilist::{self, MediaListGroup, MediaListStatus, Session};
-use eframe::egui;
+use azusa_core::anilist::{
+	self, MediaFormat, MediaListGroup, MediaListStatus, MediaSeason, Session,
+};
+use eframe::egui::{self, Layout};
 use egui_extras::{Column, TableBuilder};
 
 #[derive(Default)]
@@ -89,9 +91,12 @@ impl eframe::App for AzusaApp {
 						TableBuilder::new(ui)
 							.striped(true)
 							.cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-							.column(Column::remainder())
-							.column(Column::auto().at_least(50.0))
-							.column(Column::initial(50.0).at_least(50.0))
+							.column(Column::remainder().clip(true).at_least(200.0))
+							.column(Column::auto())
+							.column(Column::exact(50.0))
+							.column(Column::exact(60.0))
+							.column(Column::exact(100.0))
+							.column(Column::exact(100.0))
 							.header(20.0, |mut header| {
 								header.col(|ui| {
 									ui.strong("Anime title");
@@ -104,6 +109,24 @@ impl eframe::App for AzusaApp {
 								header.col(|ui| {
 									ui.centered_and_justified(|ui| {
 										ui.strong("Score");
+									});
+								});
+								header.col(|ui| {
+									ui.centered_and_justified(|ui| {
+										ui.strong("Type");
+									});
+								});
+								header.col(|ui| {
+									ui.with_layout(
+										Layout::right_to_left(egui::Align::Center),
+										|ui| {
+											ui.strong("Season");
+										},
+									);
+								});
+								header.col(|ui| {
+									ui.centered_and_justified(|ui| {
+										ui.strong("Last updated");
 									});
 								});
 							})
@@ -131,6 +154,31 @@ impl eframe::App for AzusaApp {
 										.filter(|&score| score > 0.0)
 										.map_or_else(|| "-".to_owned(), |score| score.to_string());
 
+									let format = entry
+										.media
+										.as_ref()
+										.and_then(|media| media.format)
+										.map_or_else(|| "-", |format| format_label(format));
+
+									let season = entry
+										.media
+										.as_ref()
+										.and_then(|media| media.season)
+										.map_or_else(|| "?", |season| season_label(season));
+
+									let season_year = entry
+										.media
+										.as_ref()
+										.and_then(|media| media.season_year)
+										.map_or_else(
+											|| "?".to_owned(),
+											|season_year| season_year.to_string(),
+										);
+
+									let updated_at = entry
+										.updated_at
+										.map_or_else(|| "?".to_owned(), updated_label);
+
 									#[expect(
 										clippy::cast_precision_loss,
 										reason = "episode counts are far below 2^24"
@@ -154,6 +202,8 @@ impl eframe::App for AzusaApp {
 										ui.add(
 											egui::ProgressBar::new(fraction)
 												.desired_width(150.0)
+												.desired_height(12.0)
+												.fill(egui::Color32::from_rgb(92, 184, 92))
 												.corner_radius(0),
 										);
 
@@ -181,6 +231,30 @@ impl eframe::App for AzusaApp {
 											ui.label(score);
 										});
 									});
+
+									// Type
+									row.col(|ui| {
+										ui.centered_and_justified(|ui| {
+											ui.label(format);
+										});
+									});
+
+									// Season
+									row.col(|ui| {
+										ui.with_layout(
+											Layout::right_to_left(egui::Align::Center),
+											|ui| {
+												ui.label(format!("{season} {season_year}"));
+											},
+										);
+									});
+
+									// Last updated
+									row.col(|ui| {
+										ui.centered_and_justified(|ui| {
+											ui.label(updated_at);
+										});
+									});
 								});
 							});
 					} else {
@@ -196,4 +270,57 @@ impl eframe::App for AzusaApp {
 			}
 		});
 	}
+}
+
+fn format_label(format: MediaFormat) -> &'static str {
+	match format {
+		MediaFormat::Tv => "TV",
+		MediaFormat::TvShort => "TV Short",
+		MediaFormat::Movie => "Movie",
+		MediaFormat::Special => "Special",
+		MediaFormat::Ova => "OVA",
+		MediaFormat::Ona => "ONA",
+		MediaFormat::Music => "Music",
+		MediaFormat::Other => "?",
+	}
+}
+
+fn season_label(season: MediaSeason) -> &'static str {
+	match season {
+		MediaSeason::Winter => "Winter",
+		MediaSeason::Spring => "Spring",
+		MediaSeason::Summer => "Summer",
+		MediaSeason::Fall => "Fall",
+	}
+}
+
+fn updated_label(updated_at: i32) -> String {
+	const MINUTE: i64 = 60;
+	const HOUR: i64 = 60 * MINUTE;
+	const DAY: i64 = 24 * HOUR;
+
+	let Ok(timestamp) = jiff::Timestamp::from_second(i64::from(updated_at)) else {
+		return "-".to_owned();
+	};
+	let seconds = jiff::Timestamp::now().duration_since(timestamp).as_secs();
+
+	match seconds {
+		s if s < MINUTE => "just now".to_owned(),
+		s if s < HOUR => ago(s / MINUTE, "minute"),
+		s if s < DAY => ago(s / HOUR, "hour"),
+		s if s < 21 * DAY => ago(s / DAY, "day"),
+		_ => {
+			let date = timestamp.to_zoned(jiff::tz::TimeZone::system()).date();
+			if date.year() == jiff::Zoned::now().year() {
+				date.strftime("%B %-d").to_string()
+			} else {
+				date.to_string()
+			}
+		}
+	}
+}
+
+fn ago(n: i64, unit: &str) -> String {
+	let plural = if n == 1 { "" } else { "s" };
+	format!("{n} {unit}{plural} ago")
 }

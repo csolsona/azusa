@@ -8,6 +8,7 @@ azusa-core.workspace = true
 eframe.workspace = true
 egui_extras.workspace = true
 env_logger.workspace = true
+jiff.workspace = true
 
 [[bin]]
 name = "azusa"

@@ -60,6 +60,7 @@ pub struct MediaList {
 	pub progress: Option<i32>,
 	pub private: Option<bool>,
 	pub status: Option<MediaListStatus>,
+	pub updated_at: Option<i32>,
 }
 
 #[derive(cynic::QueryFragment)]
@@ -69,9 +70,24 @@ pub struct Media {
 	pub id_mal: Option<i32>,
 	pub title: Option<MediaTitle>,
 	pub episodes: Option<i32>,
+	pub format: Option<MediaFormat>,
 	pub season: Option<MediaSeason>,
 	pub season_year: Option<i32>,
 	pub cover_image: Option<MediaCoverImage>,
+}
+
+#[derive(cynic::Enum, Clone, Copy, Debug)]
+#[cynic(non_exhaustive)]
+pub enum MediaFormat {
+	Tv,
+	TvShort,
+	Movie,
+	Special,
+	Ova,
+	Ona,
+	Music,
+	#[cynic(fallback)]
+	Other,
 }
 
 #[derive(cynic::Enum, Clone, Copy, Debug)]
