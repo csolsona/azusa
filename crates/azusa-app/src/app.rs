@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 
 use azusa_core::anilist::{
-	self, MediaFormat, MediaListGroup, MediaListStatus, MediaSeason, Session,
+	self, AccessToken, MediaFormat, MediaListGroup, MediaListStatus, MediaSeason, Session,
 };
 use eframe::egui::{self, Layout};
 use egui_extras::{Column, TableBuilder};
@@ -24,6 +24,16 @@ pub struct AzusaApp {
 }
 
 impl AzusaApp {
+	pub fn new(ctx: &egui::Context) -> Self {
+		let mut app = Self::default();
+		match anilist::load_token() {
+			Ok(Some(token)) => app.spawn_session(ctx, move || Ok(token)),
+			Ok(None) => {}
+			Err(err) => app.auth = AuthState::Failed(err),
+		}
+		app
+	}
+
 	/// Spawns the loopback server in a background thread and opens the browser.
 	fn start_login(&mut self, ctx: &egui::Context) {
 		let server = match anilist::LoginServer::bind() {
@@ -33,23 +43,26 @@ impl AzusaApp {
 				return;
 			}
 		};
+		self.spawn_session(ctx, move || server.wait_for_token());
+		ctx.open_url(egui::OpenUrl::new_tab(anilist::authorize_url()));
+	}
 
+	/// Fetches the session and lists in a background thread, using the token from `get_token`.
+	fn spawn_session(
+		&mut self,
+		ctx: &egui::Context,
+		get_token: impl FnOnce() -> Result<AccessToken, anilist::Error> + Send + 'static,
+	) {
 		let (tx, rx) = mpsc::channel();
 		let thread_ctx = ctx.clone();
 		std::thread::spawn(move || {
-			let _ = tx.send(
-				server
-					.wait_for_token()
-					.and_then(Session::start)
-					.and_then(|session| {
-						let lists = session.anime_lists()?;
-						Ok((session, lists))
-					}),
-			);
+			let _ = tx.send(get_token().and_then(Session::start).and_then(|session| {
+				anilist::save_token(&session.token)?;
+				let lists = session.anime_lists()?;
+				Ok((session, lists))
+			}));
 			thread_ctx.request_repaint();
 		});
-
-		ctx.open_url(egui::OpenUrl::new_tab(anilist::authorize_url()));
 		self.auth = AuthState::Waiting(rx);
 	}
 }

@@ -12,6 +12,7 @@ tiny_http.workspace = true
 ureq.workspace = true
 log.workspace = true
 cynic.workspace = true
+keyring.workspace = true
 
 [build-dependencies]
 cynic-codegen.workspace = true

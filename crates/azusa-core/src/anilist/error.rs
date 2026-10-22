@@ -12,4 +12,6 @@ pub enum Error {
 	GraphQl(Vec<cynic::GraphQlError>),
 	#[error("AniList response had no data")]
 	MissingData,
+	#[error("keyring error: {0:?}")]
+	Keyring(#[from] keyring::Error),
 }

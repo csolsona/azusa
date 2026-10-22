@@ -18,6 +18,6 @@ fn main() -> eframe::Result {
 	eframe::run_native(
 		"Azusa",
 		options,
-		Box::new(|_cc| Ok(Box::new(AzusaApp::default()))),
+		Box::new(|cc| Ok(Box::new(AzusaApp::new(&cc.egui_ctx)))),
 	)
 }
