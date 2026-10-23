@@ -6,6 +6,9 @@ pub struct ParsedFile {
 	pub episode: u32,
 }
 
+/// Extracts the title and episode number from an anime release filename.
+///
+/// Returns `None` if either is missing or the episode isn't an integer.
 #[must_use]
 pub fn parse_filename(name: &str) -> Option<ParsedFile> {
 	let parsed = anitomy_ng::parse(name, anitomy_ng::Options::default());
@@ -28,7 +31,7 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn parses_single_episodes() {
+	fn accepts_single_episodes() {
 		let cases = [
 			(
 				"[Erai-raws] Koori no Jouheki - 07 [1080p NF WEBRip HEVC AAC][MultiSub][F9D85957].mkv",

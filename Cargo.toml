@@ -20,6 +20,8 @@ cynic-codegen = "3"
 jiff = "0.2"
 keyring = "4"
 anitomy-ng = "1"
+walkdir = "2"
+tempfile = "3"
 
 [profile.release]
 lto = true
