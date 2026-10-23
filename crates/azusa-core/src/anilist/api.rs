@@ -90,7 +90,7 @@ pub enum MediaFormat {
 	Other,
 }
 
-#[derive(cynic::Enum, Clone, Copy, Debug)]
+#[derive(cynic::Enum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaListStatus {
 	Current,
 	Completed,
@@ -98,6 +98,17 @@ pub enum MediaListStatus {
 	Dropped,
 	Planning,
 	Repeating,
+}
+
+impl MediaListStatus {
+	pub const ALL: [Self; 6] = [
+		Self::Current,
+		Self::Completed,
+		Self::Paused,
+		Self::Dropped,
+		Self::Planning,
+		Self::Repeating,
+	];
 }
 
 #[derive(cynic::QueryFragment)]

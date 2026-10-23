@@ -13,6 +13,7 @@ enum AuthState {
 	Waiting(mpsc::Receiver<Result<(Session, Vec<MediaListGroup>), anilist::Error>>),
 	LoggedIn {
 		session: Session,
+		selected_status: MediaListStatus,
 		lists: Vec<MediaListGroup>,
 	},
 	Failed(anilist::Error),
@@ -73,15 +74,27 @@ impl eframe::App for AzusaApp {
 			&& let Ok(result) = rx.try_recv()
 		{
 			self.auth = match result {
-				Ok((session, lists)) => AuthState::LoggedIn { session, lists },
+				Ok((session, lists)) => AuthState::LoggedIn {
+					session,
+					selected_status: MediaListStatus::Current,
+					lists,
+				},
 				Err(err) => AuthState::Failed(err),
 			};
 		}
 
+		egui::Panel::top("top-panel").show(ui, |ui| {
+			egui::MenuBar::new().ui(ui, |ui| {
+				ui.menu_button("File", |ui| {
+					ui.button("Test");
+				});
+			});
+		});
+
 		egui::CentralPanel::default().show(ui, |ui| {
 			ui.heading("Azusa");
 
-			match &self.auth {
+			match &mut self.auth {
 				AuthState::LoggedOut => {
 					if ui.button("AniList login").clicked() {
 						self.start_login(ui.ctx());
@@ -93,12 +106,22 @@ impl eframe::App for AzusaApp {
 						ui.label("Waiting for the browser…");
 					});
 				}
-				AuthState::LoggedIn { session, lists } => {
+				AuthState::LoggedIn {
+					session,
+					selected_status,
+					lists,
+				} => {
 					ui.label(format!("Welcome, {}", session.viewer.name));
+
+					ui.horizontal(|ui| {
+						for status in MediaListStatus::ALL {
+							ui.selectable_value(selected_status, status, status_label(status));
+						}
+					});
 
 					let anime_list = lists
 						.iter()
-						.find(|group| matches!(group.status, Some(MediaListStatus::Current)));
+						.find(|group| group.status == Some(*selected_status));
 
 					if let Some(group) = anime_list {
 						TableBuilder::new(ui)
@@ -282,6 +305,17 @@ impl eframe::App for AzusaApp {
 				}
 			}
 		});
+	}
+}
+
+fn status_label(status: MediaListStatus) -> &'static str {
+	match status {
+		MediaListStatus::Current => "Watching",
+		MediaListStatus::Completed => "Completed",
+		MediaListStatus::Paused => "Paused",
+		MediaListStatus::Dropped => "Dropped",
+		MediaListStatus::Planning => "Planning",
+		MediaListStatus::Repeating => "Rewatching",
 	}
 }
 
