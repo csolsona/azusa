@@ -19,6 +19,7 @@ cynic = "3"
 cynic-codegen = "3"
 jiff = "0.2"
 keyring = "4"
+anitomy-ng = "1"
 
 [profile.release]
 lto = true
