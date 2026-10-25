@@ -15,6 +15,7 @@ cynic.workspace = true
 keyring.workspace = true
 anitomy-ng.workspace = true
 walkdir.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
