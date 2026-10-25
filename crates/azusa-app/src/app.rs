@@ -1,7 +1,10 @@
-use std::sync::mpsc;
+use std::{env, io, sync::mpsc};
 
-use azusa_core::anilist::{
-	self, AccessToken, MediaFormat, MediaListGroup, MediaListStatus, MediaSeason, Session,
+use azusa_core::{
+	anilist::{
+		self, AccessToken, MediaFormat, MediaListGroup, MediaListStatus, MediaSeason, Session,
+	},
+	library::{self, LocalEpisode},
 };
 use eframe::egui::{self, Layout};
 use egui_extras::{Column, TableBuilder};
@@ -20,13 +23,24 @@ enum AuthState {
 }
 
 #[derive(Default)]
+enum LibraryState {
+	#[default]
+	NotScanned,
+	Scanning(mpsc::Receiver<io::Result<Vec<LocalEpisode>>>),
+	Scanned(Vec<LocalEpisode>),
+	Failed(io::Error),
+}
+
+#[derive(Default)]
 pub struct AzusaApp {
 	auth: AuthState,
+	library: LibraryState,
 }
 
 impl AzusaApp {
 	pub fn new(ctx: &egui::Context) -> Self {
 		let mut app = Self::default();
+		app.start_scan(ctx);
 		match anilist::load_token() {
 			Ok(Some(token)) => app.spawn_session(ctx, move || Ok(token)),
 			Ok(None) => {}
@@ -66,6 +80,23 @@ impl AzusaApp {
 		});
 		self.auth = AuthState::Waiting(rx);
 	}
+
+	/// Scans the library directory in a background thread.
+	fn start_scan(&mut self, ctx: &egui::Context) {
+		let (tx, rx) = mpsc::channel();
+		let thread_ctx = ctx.clone();
+
+		// TODO: hardcoded shortcut until settings menu exists
+		let dir = env::home_dir()
+			.expect("home directory should exist")
+			.join("downloads");
+
+		std::thread::spawn(move || {
+			let _ = tx.send(library::scan(&dir));
+			thread_ctx.request_repaint();
+		});
+		self.library = LibraryState::Scanning(rx);
+	}
 }
 
 impl eframe::App for AzusaApp {
@@ -83,6 +114,15 @@ impl eframe::App for AzusaApp {
 			};
 		}
 
+		if let LibraryState::Scanning(rx) = &self.library
+			&& let Ok(result) = rx.try_recv()
+		{
+			self.library = match result {
+				Ok(episodes) => LibraryState::Scanned(episodes),
+				Err(err) => LibraryState::Failed(err),
+			};
+		}
+
 		egui::Panel::top("top-panel").show(ui, |ui| {
 			egui::MenuBar::new().ui(ui, |ui| {
 				ui.menu_button("File", |ui| {
@@ -93,6 +133,25 @@ impl eframe::App for AzusaApp {
 
 		egui::CentralPanel::default().show(ui, |ui| {
 			ui.heading("Azusa");
+
+			match &self.library {
+				LibraryState::NotScanned => {
+					ui.label("Not scanned");
+				}
+				LibraryState::Scanning(_) => {
+					ui.horizontal(|ui| {
+						ui.spinner();
+						ui.label("Scanning…");
+					});
+				}
+				LibraryState::Scanned(episodes) => {
+					let count = episodes.len();
+					ui.label(format!("{count} episodes scanned"));
+				}
+				LibraryState::Failed(err) => {
+					ui.colored_label(ui.visuals().error_fg_color, err.to_string());
+				}
+			}
 
 			match &mut self.auth {
 				AuthState::LoggedOut => {
