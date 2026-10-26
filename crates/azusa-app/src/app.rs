@@ -200,8 +200,11 @@ impl eframe::App for AzusaApp {
 						.find(|group| group.status == Some(*selected_status));
 
 					if let Some(group) = anime_list {
+						ui.style_mut().interaction.selectable_labels = false;
+
 						TableBuilder::new(ui)
 							.striped(true)
+							.sense(egui::Sense::click())
 							.cell_layout(egui::Layout::left_to_right(egui::Align::Center))
 							.column(Column::remainder().clip(true).at_least(200.0))
 							.column(Column::auto())
@@ -253,9 +256,13 @@ impl eframe::App for AzusaApp {
 										.and_then(|title| title.romaji.as_deref())
 										.unwrap_or("Unknown title");
 
-									let progress = entry.progress.unwrap_or(0);
+									let progress =
+										u32::try_from(entry.progress.unwrap_or(0)).unwrap_or(0);
 
-									let total_episodes = media.and_then(|media| media.episodes);
+									let total_episodes = media
+										.and_then(|media| media.episodes)
+										.and_then(|total| u32::try_from(total).ok())
+										.filter(|&total| total > 0);
 
 									let episodes_text = total_episodes
 										.map_or_else(|| "?".to_owned(), |total| total.to_string());
@@ -287,6 +294,10 @@ impl eframe::App for AzusaApp {
 										.and_then(|matched| matched.get(&media?.id))
 										.map(Vec::as_slice)
 										.unwrap_or_default();
+
+									let next_episode = local_episodes
+										.iter()
+										.find(|episode| episode.parsed.episode == progress + 1);
 
 									// Title
 									row.col(|ui| {
@@ -347,6 +358,25 @@ impl eframe::App for AzusaApp {
 											ui.label(updated_at);
 										});
 									});
+
+									row.response().context_menu(|ui| {
+										let play_next = ui.add_enabled(
+											next_episode.is_some(),
+											egui::Button::new("Play next episode"),
+										);
+
+										if play_next.clicked()
+											&& let Some(episode) = next_episode
+										{
+											if let Err(err) = open::that_detached(&episode.path) {
+												log::warn!(
+													"could not open {}: {err}",
+													episode.path.display()
+												);
+											}
+											ui.close();
+										}
+									});
 								});
 							});
 					} else {
@@ -368,12 +398,7 @@ impl eframe::App for AzusaApp {
 	clippy::cast_precision_loss,
 	reason = "episode counts are far below 2^24"
 )]
-fn progress_bar(ui: &mut egui::Ui, progress: i32, total: Option<i32>, episodes: &[LocalEpisode]) {
-	let progress = u32::try_from(progress).unwrap_or(0);
-	let total = total
-		.and_then(|total| u32::try_from(total).ok())
-		.filter(|&total| total > 0);
-
+fn progress_bar(ui: &mut egui::Ui, progress: u32, total: Option<u32>, episodes: &[LocalEpisode]) {
 	// Progress bar background
 	let (rect, _response) = ui.allocate_exact_size(egui::vec2(150.0, 12.0), egui::Sense::hover());
 

@@ -23,6 +23,7 @@ anitomy-ng = "1"
 walkdir = "2"
 tempfile = "3"
 unicode-normalization = "0.1.26"
+open = "5"
 
 [profile.release]
 lto = true
