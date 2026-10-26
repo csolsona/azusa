@@ -1,4 +1,4 @@
-use std::{env, io, sync::mpsc};
+use std::{collections::HashMap, env, io, sync::mpsc};
 
 use azusa_core::{
 	anilist::{
@@ -28,6 +28,7 @@ enum LibraryState {
 	NotScanned,
 	Scanning(mpsc::Receiver<io::Result<Vec<LocalEpisode>>>),
 	Scanned(Vec<LocalEpisode>),
+	Matched(HashMap<i32, Vec<LocalEpisode>>),
 	Failed(io::Error),
 }
 
@@ -123,6 +124,13 @@ impl eframe::App for AzusaApp {
 			};
 		}
 
+		if let AuthState::LoggedIn { lists, .. } = &self.auth
+			&& let LibraryState::Scanned(episodes) = &mut self.library
+		{
+			let episodes = std::mem::take(episodes);
+			self.library = LibraryState::Matched(library::match_library(lists, episodes));
+		}
+
 		egui::Panel::top("top-panel").show(ui, |ui| {
 			egui::MenuBar::new().ui(ui, |ui| {
 				ui.menu_button("File", |ui| {
@@ -148,10 +156,19 @@ impl eframe::App for AzusaApp {
 					let count = episodes.len();
 					ui.label(format!("{count} episodes scanned"));
 				}
+				LibraryState::Matched(episodes) => {
+					let count = episodes.len();
+					ui.label(format!("{count} episodes matched"));
+				}
 				LibraryState::Failed(err) => {
 					ui.colored_label(ui.visuals().error_fg_color, err.to_string());
 				}
 			}
+
+			let matched = match &self.library {
+				LibraryState::Matched(matched) => Some(matched),
+				_ => None,
+			};
 
 			match &mut self.auth {
 				AuthState::LoggedOut => {
@@ -229,17 +246,16 @@ impl eframe::App for AzusaApp {
 								body.rows(20.0, group.entries.len(), |mut row| {
 									let entry = &group.entries[row.index()];
 
-									let title = entry
-										.media
-										.as_ref()
+									let media = entry.media.as_ref();
+
+									let title = media
 										.and_then(|media| media.title.as_ref())
 										.and_then(|title| title.romaji.as_deref())
 										.unwrap_or("Unknown title");
 
 									let progress = entry.progress.unwrap_or(0);
 
-									let total_episodes =
-										entry.media.as_ref().and_then(|media| media.episodes);
+									let total_episodes = media.and_then(|media| media.episodes);
 
 									let episodes_text = total_episodes
 										.map_or_else(|| "?".to_owned(), |total| total.to_string());
@@ -249,23 +265,16 @@ impl eframe::App for AzusaApp {
 										.filter(|&score| score > 0.0)
 										.map_or_else(|| "-".to_owned(), |score| score.to_string());
 
-									let format = entry
-										.media
-										.as_ref()
+									let format = media
 										.and_then(|media| media.format)
 										.map_or_else(|| "-", |format| format_label(format));
 
-									let season = entry
-										.media
-										.as_ref()
+									let season = media
 										.and_then(|media| media.season)
 										.map_or_else(|| "?", |season| season_label(season));
 
-									let season_year = entry
-										.media
-										.as_ref()
-										.and_then(|media| media.season_year)
-										.map_or_else(
+									let season_year =
+										media.and_then(|media| media.season_year).map_or_else(
 											|| "?".to_owned(),
 											|season_year| season_year.to_string(),
 										);
@@ -274,17 +283,10 @@ impl eframe::App for AzusaApp {
 										.updated_at
 										.map_or_else(|| "?".to_owned(), updated_label);
 
-									#[expect(
-										clippy::cast_precision_loss,
-										reason = "episode counts are far below 2^24"
-									)]
-									let fraction = match (progress, total_episodes) {
-										(0, _) => 0.0,
-										(_, Some(total)) if total > 0 => {
-											progress as f32 / total as f32
-										}
-										_ => 0.5,
-									};
+									let local_episodes: &[LocalEpisode] = matched
+										.and_then(|matched| matched.get(&media?.id))
+										.map(Vec::as_slice)
+										.unwrap_or_default();
 
 									// Title
 									row.col(|ui| {
@@ -294,13 +296,8 @@ impl eframe::App for AzusaApp {
 									// Progress
 									row.col(|ui| {
 										ui.spacing_mut().item_spacing.x = 2.0;
-										ui.add(
-											egui::ProgressBar::new(fraction)
-												.desired_width(150.0)
-												.desired_height(12.0)
-												.fill(egui::Color32::from_rgb(92, 184, 92))
-												.corner_radius(0),
-										);
+
+										progress_bar(ui, progress, total_episodes, local_episodes);
 
 										let size = egui::vec2(20.0, ui.available_height());
 										ui.allocate_ui_with_layout(
@@ -364,6 +361,67 @@ impl eframe::App for AzusaApp {
 				}
 			}
 		});
+	}
+}
+
+#[expect(
+	clippy::cast_precision_loss,
+	reason = "episode counts are far below 2^24"
+)]
+fn progress_bar(ui: &mut egui::Ui, progress: i32, total: Option<i32>, episodes: &[LocalEpisode]) {
+	let progress = u32::try_from(progress).unwrap_or(0);
+	let total = total
+		.and_then(|total| u32::try_from(total).ok())
+		.filter(|&total| total > 0);
+
+	// Progress bar background
+	let (rect, _response) = ui.allocate_exact_size(egui::vec2(150.0, 12.0), egui::Sense::hover());
+
+	ui.painter()
+		.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
+
+	// Downloaded episodes strip background
+	let episode_strip =
+		egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - 3.0), rect.max);
+
+	ui.painter()
+		.rect_filled(episode_strip, 0.0, ui.visuals().widgets.inactive.bg_fill);
+
+	// Progress bar fill
+	let fraction = match (progress, total) {
+		(0, _) => 0.0,
+		(_, Some(total)) => progress as f32 / total as f32,
+		_ => 0.5,
+	};
+
+	let filled = egui::Rect::from_min_size(
+		rect.min,
+		egui::vec2(rect.width() * fraction.clamp(0.0, 1.0), rect.height()),
+	);
+
+	ui.painter()
+		.rect_filled(filled, 0.0, egui::Color32::from_rgb(96, 198, 83));
+
+	// Downloaded episodes strip fill
+	if let Some(total) = total {
+		let episode_width = episode_strip.width() / total as f32;
+		for episode in episodes {
+			let episode_number = episode.parsed.episode;
+			if !(1..=total).contains(&episode_number) {
+				continue;
+			}
+
+			let left = episode_strip.left() + (episode_number - 1) as f32 * episode_width;
+			let episode_fill_strip = egui::Rect::from_min_max(
+				egui::pos2(left, episode_strip.top()),
+				egui::pos2(left + episode_width, episode_strip.bottom()),
+			);
+			ui.painter().rect_filled(
+				episode_fill_strip,
+				0.0,
+				egui::Color32::from_rgb(75, 153, 64),
+			);
+		}
 	}
 }
 
