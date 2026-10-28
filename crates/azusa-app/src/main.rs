@@ -2,10 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
-
-use eframe::egui;
+mod ui;
 
 use crate::app::AzusaApp;
+use eframe::egui;
 
 fn main() -> eframe::Result {
 	env_logger::init();
