@@ -1,6 +1,6 @@
 //! `AniList` GraphQL API client.
 
-use cynic::QueryBuilder;
+use cynic::{MutationBuilder, QueryBuilder};
 
 use super::schema;
 use crate::anilist::{AccessToken, Error};
@@ -133,6 +133,26 @@ pub enum MediaSeason {
 	Fall,
 }
 
+#[derive(cynic::QueryFragment)]
+#[cynic(graphql_type = "Mutation", variables = "SaveProgressArguments")]
+struct SaveProgressMutation {
+	#[arguments(id: $id, progress: $progress)]
+	#[cynic(rename = "SaveMediaListEntry")]
+	save_media_list_entry: Option<SavedProgress>,
+}
+
+#[derive(cynic::QueryVariables)]
+struct SaveProgressArguments {
+	id: i32,
+	progress: i32,
+}
+
+#[derive(cynic::QueryFragment)]
+#[cynic(graphql_type = "MediaList")]
+struct SavedProgress {
+	progress: Option<i32>,
+}
+
 /// A logged-in `AniList` session: the token plus the user it belongs to.
 pub struct Session {
 	pub token: AccessToken,
@@ -143,58 +163,71 @@ impl Session {
 	/// Validates the token by fetching the user it belongs to.
 	///
 	/// # Errors
-	/// [`Error::Http`] if the request fails or the token is rejected.
-	/// [`Error::GraphQl`] or [`Error::MissingData`] if the response has no viewer.
+	/// [`Error::Http`] if the request fails.
+	/// [`Error::GraphQl`] if `AniList` rejects it, for example an expired token.
+	/// [`Error::MissingData`] if the response has no viewer.
 	pub fn start(token: AccessToken) -> Result<Self, Error> {
-		let viewer = fetch_viewer(&token)?;
+		let viewer = send(&token, ViewerQuery::build(()))?
+			.viewer
+			.ok_or(Error::MissingData)?;
+
 		Ok(Self { token, viewer })
 	}
 
 	/// Fetches the viewer's anime lists, one group per status or custom list.
 	///
 	/// # Errors
-	/// [`Error::Http`] if the request fails or the token is rejected.
-	/// [`Error::GraphQl`] or [`Error::MissingData`] if the response has no lists.
+	/// [`Error::Http`] if the request fails.
+	/// [`Error::GraphQl`] if `AniList` rejects it, for example an expired token.
+	/// [`Error::MissingData`] if the response has no lists.
 	pub fn anime_lists(&self) -> Result<Vec<MediaListGroup>, Error> {
-		fetch_anime_list(self)
+		let operation = MediaListCollectionQuery::build(MediaListCollectionArguments {
+			user_id: self.viewer.id,
+		});
+
+		send(&self.token, operation)?
+			.media_list_collection
+			.map(|collection| collection.lists)
+			.ok_or(Error::MissingData)
+	}
+
+	/// Sets the episode progress of a list entry and returns the progress `AniList` saved.
+	///
+	/// # Errors
+	/// [`Error::Http`] if the request fails.
+	/// [`Error::GraphQl`] if `AniList` rejects it, for example an expired token.
+	/// [`Error::MissingData`] if the response has no entry.
+	pub fn update_progress(&self, entry_id: i32, progress: i32) -> Result<i32, Error> {
+		let operation = SaveProgressMutation::build(SaveProgressArguments {
+			id: entry_id,
+			progress,
+		});
+
+		send(&self.token, operation)?
+			.save_media_list_entry
+			.and_then(|entry| entry.progress)
+			.ok_or(Error::MissingData)
 	}
 }
 
-fn fetch_viewer(token: &AccessToken) -> Result<Viewer, Error> {
-	let response: cynic::GraphQlResponse<ViewerQuery> = ureq::post(API_URL)
+fn send<T, V>(token: &AccessToken, operation: cynic::Operation<T, V>) -> Result<T, Error>
+where
+	T: cynic::serde::de::DeserializeOwned,
+	V: cynic::serde::Serialize,
+{
+	let response: cynic::GraphQlResponse<T> = ureq::post(API_URL)
+		.config()
+		.http_status_as_error(false)
+		.build()
 		.header("Authorization", format!("Bearer {}", token.0))
 		.header("Accept", "application/json")
-		.send_json(ViewerQuery::build(()))?
+		.send_json(operation)?
 		.body_mut()
 		.read_json()?;
 
 	if let Some(errors) = response.errors {
 		return Err(Error::GraphQl(errors));
 	}
-	response
-		.data
-		.and_then(|data| data.viewer)
-		.ok_or(Error::MissingData)
-}
 
-fn fetch_anime_list(session: &Session) -> Result<Vec<MediaListGroup>, Error> {
-	let response: cynic::GraphQlResponse<MediaListCollectionQuery> = ureq::post(API_URL)
-		.header("Authorization", format!("Bearer {}", session.token.0))
-		.header("Accept", "application/json")
-		.send_json(MediaListCollectionQuery::build(
-			MediaListCollectionArguments {
-				user_id: session.viewer.id,
-			},
-		))?
-		.body_mut()
-		.read_json()?;
-
-	if let Some(errors) = response.errors {
-		return Err(Error::GraphQl(errors));
-	}
-	response
-		.data
-		.and_then(|data| data.media_list_collection)
-		.map(|collection| collection.lists)
-		.ok_or(Error::MissingData)
+	response.data.ok_or(Error::MissingData)
 }

@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod sync;
 mod ui;
 
 use crate::app::AzusaApp;
@@ -11,7 +12,7 @@ fn main() -> eframe::Result {
 	env_logger::init();
 
 	let options = eframe::NativeOptions {
-		viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 700.0]),
+		viewport: egui::ViewportBuilder::default().with_inner_size([930.0, 620.0]),
 		..Default::default()
 	};
 

@@ -7,11 +7,19 @@ use azusa_core::{
 use eframe::egui::{self, Layout};
 use egui_extras::{Column, TableBuilder, TableRow};
 
+#[derive(Debug)]
+pub struct ProgressChange {
+	pub entry_id: i32,
+	pub progress: u32,
+}
+
 pub fn show(
 	ui: &mut egui::Ui,
 	group: &MediaListGroup,
 	matched: Option<&HashMap<i32, Vec<LocalEpisode>>>,
-) {
+) -> Option<ProgressChange> {
+	let mut change = None;
+
 	TableBuilder::new(ui)
 		.striped(true)
 		.sense(egui::Sense::click())
@@ -22,13 +30,17 @@ pub fn show(
 		.column(Column::exact(60.0))
 		.column(Column::exact(100.0))
 		.column(Column::exact(100.0))
-		.header(20.0, header_row)
+		.header(22.0, header_row)
 		.body(|body| {
 			body.rows(20.0, group.entries.len(), |row| {
 				let entry = &group.entries[row.index()];
-				entry_row(row, entry, matched);
+				if let Some(row_change) = entry_row(row, entry, matched) {
+					change = Some(row_change);
+				}
 			});
 		});
+
+	change
 }
 
 fn header_row(mut header: TableRow<'_, '_>) {
@@ -66,7 +78,7 @@ fn entry_row(
 	mut row: TableRow<'_, '_>,
 	entry: &MediaList,
 	matched: Option<&HashMap<i32, Vec<LocalEpisode>>>,
-) {
+) -> Option<ProgressChange> {
 	let media = entry.media.as_ref();
 
 	let title = media
@@ -80,8 +92,6 @@ fn entry_row(
 		.and_then(|media| media.episodes)
 		.and_then(|total| u32::try_from(total).ok())
 		.filter(|&total| total > 0);
-
-	let episodes_text = total_episodes.map_or_else(|| "?".to_owned(), |total| total.to_string());
 
 	let score = entry
 		.score
@@ -119,28 +129,8 @@ fn entry_row(
 	});
 
 	// Progress
-	row.col(|ui| {
-		ui.spacing_mut().item_spacing.x = 2.0;
-
-		progress_bar(ui, progress, total_episodes, local_episodes);
-
-		let size = egui::vec2(20.0, ui.available_height());
-		ui.allocate_ui_with_layout(
-			size,
-			egui::Layout::right_to_left(egui::Align::Center),
-			|ui| {
-				ui.label(progress.to_string());
-			},
-		);
-		ui.label("/");
-		ui.allocate_ui_with_layout(
-			size,
-			egui::Layout::left_to_right(egui::Align::Center),
-			|ui| {
-				ui.label(episodes_text);
-			},
-		);
-	});
+	let mut change = None;
+	row.col(|ui| change = progress_cell(ui, entry.id, progress, total_episodes, local_episodes));
 
 	// Score
 	row.col(|ui| {
@@ -185,15 +175,92 @@ fn entry_row(
 			ui.close();
 		}
 	});
+
+	change
+}
+
+fn progress_cell(
+	ui: &mut egui::Ui,
+	entry_id: i32,
+	progress: u32,
+	total: Option<u32>,
+	episodes: &[LocalEpisode],
+) -> Option<ProgressChange> {
+	let episodes_text = total.map_or_else(|| "?".to_owned(), |total| total.to_string());
+
+	ui.spacing_mut().item_spacing.x = 2.0;
+
+	let bar = progress_bar(ui, progress, total, episodes);
+
+	let size = egui::vec2(20.0, ui.available_height());
+	ui.allocate_ui_with_layout(
+		size,
+		egui::Layout::right_to_left(egui::Align::Center),
+		|ui| {
+			ui.label(progress.to_string());
+		},
+	);
+	ui.label("/");
+	ui.allocate_ui_with_layout(
+		size,
+		egui::Layout::left_to_right(egui::Align::Center),
+		|ui| {
+			ui.label(episodes_text);
+		},
+	);
+
+	let row_rect = egui::Rect::from_x_y_ranges(
+		egui::Rangef::EVERYTHING,
+		ui.max_rect()
+			.y_range()
+			.expand(0.5 * ui.spacing().item_spacing.y),
+	);
+	let row_hovered = ui.ctx().rect_contains_pointer(ui.layer_id(), row_rect);
+
+	if !row_hovered {
+		return None;
+	}
+
+	let button_size = egui::vec2(bar.height(), bar.height());
+
+	let decrement_rect = egui::Rect::from_min_size(bar.left_top(), button_size);
+	let increment_rect =
+		egui::Rect::from_min_size(bar.right_top() - egui::vec2(bar.height(), 0.0), button_size);
+
+	let can_decrement = progress > 0;
+	let can_increment = total.is_none_or(|total| progress < total);
+
+	let decrement = can_decrement.then(|| bar_button(ui, decrement_rect, "-"));
+	let increment = can_increment.then(|| bar_button(ui, increment_rect, "+"));
+
+	if decrement.is_some_and(|button| button.clicked()) {
+		return Some(ProgressChange {
+			entry_id,
+			progress: progress - 1,
+		});
+	}
+	if increment.is_some_and(|button| button.clicked()) {
+		return Some(ProgressChange {
+			entry_id,
+			progress: progress + 1,
+		});
+	}
+
+	None
 }
 
 #[expect(
 	clippy::cast_precision_loss,
 	reason = "episode counts are far below 2^24"
 )]
-fn progress_bar(ui: &mut egui::Ui, progress: u32, total: Option<u32>, episodes: &[LocalEpisode]) {
+fn progress_bar(
+	ui: &mut egui::Ui,
+	progress: u32,
+	total: Option<u32>,
+	episodes: &[LocalEpisode],
+) -> egui::Rect {
 	// Progress bar background
-	let (rect, _response) = ui.allocate_exact_size(egui::vec2(150.0, 12.0), egui::Sense::hover());
+	let (rect, _response) = ui.allocate_exact_size(egui::vec2(145.0, 12.0), egui::Sense::hover());
 
 	ui.painter()
 		.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
@@ -241,6 +308,24 @@ fn progress_bar(ui: &mut egui::Ui, progress: u32, total: Option<u32>, episodes: 
 			);
 		}
 	}
+
+	rect
+}
+
+fn bar_button(ui: &mut egui::Ui, rect: egui::Rect, symbol: &str) -> egui::Response {
+	let response = ui.allocate_rect(rect, egui::Sense::click());
+	let visuals = ui.style().interact(&response);
+
+	ui.painter().rect_filled(rect, 0.0, visuals.weak_bg_fill);
+	ui.painter().text(
+		rect.center(),
+		egui::Align2::CENTER_CENTER,
+		symbol,
+		egui::FontId::monospace(11.0),
+		visuals.text_color(),
+	);
+
+	response
 }
 
 fn format_label(format: MediaFormat) -> &'static str {

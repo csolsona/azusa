@@ -1,4 +1,8 @@
-use std::{collections::HashMap, env, io, sync::mpsc};
+use std::{
+	collections::HashMap,
+	env, io,
+	sync::{Arc, mpsc},
+};
 
 use azusa_core::{
 	anilist::{self, AccessToken, MediaListGroup, MediaListStatus, Session},
@@ -6,19 +10,63 @@ use azusa_core::{
 };
 use eframe::egui;
 
-use crate::ui::anime_table;
+use crate::{
+	sync::ProgressSync,
+	ui::anime_table::{self, ProgressChange},
+};
 
 #[derive(Default)]
 enum AuthState {
 	#[default]
 	LoggedOut,
 	Waiting(mpsc::Receiver<Result<(Session, Vec<MediaListGroup>), anilist::Error>>),
-	LoggedIn {
-		session: Session,
-		selected_status: MediaListStatus,
-		lists: Vec<MediaListGroup>,
-	},
+	LoggedIn(Account),
 	Failed(anilist::Error),
+}
+
+struct Account {
+	session: Arc<Session>,
+	lists: Vec<MediaListGroup>,
+	selected_status: MediaListStatus,
+	sync: ProgressSync,
+	error: Option<anilist::Error>,
+}
+
+impl Account {
+	fn new(ctx: &egui::Context, session: Session, lists: Vec<MediaListGroup>) -> Self {
+		let session = Arc::new(session);
+		let sync = ProgressSync::spawn(ctx, Arc::clone(&session));
+
+		Self {
+			session,
+			lists,
+			selected_status: MediaListStatus::Current,
+			sync,
+			error: None,
+		}
+	}
+
+	fn poll(&mut self) {
+		if let Some(err) = self.sync.poll_error() {
+			log::warn!("progress update failed: {err}");
+			self.error = Some(err);
+		}
+	}
+
+	fn set_progress(&mut self, change: ProgressChange) {
+		let Ok(progress) = i32::try_from(change.progress) else {
+			return;
+		};
+		if let Some(entry) = self
+			.lists
+			.iter_mut()
+			.flat_map(|group| group.entries.iter_mut())
+			.find(|entry| entry.id == change.entry_id)
+		{
+			entry.progress = Some(progress);
+		}
+		self.sync.send(change);
+	}
 }
 
 #[derive(Default)]
@@ -73,7 +121,8 @@ impl AzusaApp {
 		std::thread::spawn(move || {
 			let _ = tx.send(get_token().and_then(Session::start).and_then(|session| {
 				anilist::save_token(&session.token)?;
-				let lists = session.anime_lists()?;
+				let mut lists = session.anime_lists()?;
+				lists.retain(|group| group.is_custom_list != Some(true));
 				Ok((session, lists))
 			}));
 			thread_ctx.request_repaint();
@@ -105,11 +154,7 @@ impl eframe::App for AzusaApp {
 			&& let Ok(result) = rx.try_recv()
 		{
 			self.auth = match result {
-				Ok((session, lists)) => AuthState::LoggedIn {
-					session,
-					selected_status: MediaListStatus::Current,
-					lists,
-				},
+				Ok((session, lists)) => AuthState::LoggedIn(Account::new(ui.ctx(), session, lists)),
 				Err(err) => AuthState::Failed(err),
 			};
 		}
@@ -123,7 +168,11 @@ impl eframe::App for AzusaApp {
 			};
 		}
 
-		if let AuthState::LoggedIn { lists, .. } = &self.auth
+		if let AuthState::LoggedIn(account) = &mut self.auth {
+			account.poll();
+		}
+
+		if let AuthState::LoggedIn(Account { lists, .. }) = &self.auth
 			&& let LibraryState::Scanned(episodes) = &mut self.library
 		{
 			let episodes = std::mem::take(episodes);
@@ -162,27 +211,34 @@ impl eframe::App for AzusaApp {
 						ui.label("Waiting for the browser…");
 					});
 				}
-				AuthState::LoggedIn {
-					session,
-					selected_status,
-					lists,
-				} => {
-					ui.label(format!("Welcome, {}", session.viewer.name));
+				AuthState::LoggedIn(account) => {
+					ui.label(format!("Welcome, {}", account.session.viewer.name));
+
+					if let Some(err) = &account.error {
+						ui.colored_label(ui.visuals().error_fg_color, err.to_string());
+					}
 
 					ui.horizontal(|ui| {
 						for status in MediaListStatus::ALL {
-							ui.selectable_value(selected_status, status, status_label(status));
+							ui.selectable_value(
+								&mut account.selected_status,
+								status,
+								status_label(status),
+							);
 						}
 					});
 
-					let anime_list = lists
+					let anime_list = account
+						.lists
 						.iter()
-						.find(|group| group.status == Some(*selected_status));
+						.find(|group| group.status == Some(account.selected_status));
 
 					if let Some(group) = anime_list {
 						ui.style_mut().interaction.selectable_labels = false;
 
-						anime_table::show(ui, group, matched);
+						if let Some(change) = anime_table::show(ui, group, matched) {
+							account.set_progress(change);
+						}
 					} else {
 						ui.label("No lists");
 					}
