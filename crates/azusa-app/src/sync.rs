@@ -1,6 +1,6 @@
 use std::sync::{Arc, mpsc};
 
-use azusa_core::anilist::{self, Session};
+use azusa_core::anilist::{self, MediaListGroup, Session};
 use eframe::egui;
 
 use crate::ui::anime_table::ProgressChange;
@@ -8,7 +8,13 @@ use crate::ui::anime_table::ProgressChange;
 /// Sends progress changes to `AniList` in order from a background thread.
 pub struct ProgressSync {
 	tx: mpsc::Sender<ProgressChange>,
-	error_rx: mpsc::Receiver<anilist::Error>,
+	error_rx: mpsc::Receiver<SyncFailure>,
+}
+
+/// A failed progress update. Also contains the lists reloaded after it if the reload worked.
+pub struct SyncFailure {
+	pub error: anilist::Error,
+	pub lists: Option<Vec<MediaListGroup>>,
 }
 
 impl ProgressSync {
@@ -24,7 +30,10 @@ impl ProgressSync {
 				if let Err(err) = session.update_progress(change.entry_id, progress) {
 					// Drop pending changes so AniList history has no gaps.
 					commands.try_iter().for_each(drop);
-					let _ = error_tx.send(err);
+					let lists = fetch_lists(&session)
+						.inspect_err(|err| log::warn!("reloading lists failed: {err}"))
+						.ok();
+					let _ = error_tx.send(SyncFailure { error: err, lists });
 					ctx.request_repaint();
 				}
 			}
@@ -36,7 +45,14 @@ impl ProgressSync {
 		let _ = self.tx.send(change);
 	}
 
-	pub fn poll_error(&self) -> Option<anilist::Error> {
+	pub fn poll_error(&self) -> Option<SyncFailure> {
 		self.error_rx.try_recv().ok()
 	}
+}
+
+/// Fetches the anime lists the app supports.
+pub fn fetch_lists(session: &Session) -> Result<Vec<MediaListGroup>, anilist::Error> {
+	let mut lists = session.anime_lists()?;
+	lists.retain(|group| group.is_custom_list != Some(true));
+	Ok(lists)
 }

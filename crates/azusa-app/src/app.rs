@@ -11,7 +11,7 @@ use azusa_core::{
 use eframe::egui;
 
 use crate::{
-	sync::ProgressSync,
+	sync::{ProgressSync, SyncFailure, fetch_lists},
 	ui::anime_table::{self, ProgressChange},
 };
 
@@ -47,13 +47,19 @@ impl Account {
 	}
 
 	fn poll(&mut self) {
-		if let Some(err) = self.sync.poll_error() {
-			log::warn!("progress update failed: {err}");
-			self.error = Some(err);
+		if let Some(SyncFailure { error, lists }) = self.sync.poll_error() {
+			log::warn!("progress update failed: {error}");
+			self.error = Some(error);
+
+			if let Some(lists) = lists {
+				self.lists = lists;
+			}
 		}
 	}
 
 	fn set_progress(&mut self, change: ProgressChange) {
+		self.error = None;
+
 		let Ok(progress) = i32::try_from(change.progress) else {
 			return;
 		};
@@ -121,8 +127,9 @@ impl AzusaApp {
 		std::thread::spawn(move || {
 			let _ = tx.send(get_token().and_then(Session::start).and_then(|session| {
 				anilist::save_token(&session.token)?;
-				let mut lists = session.anime_lists()?;
-				lists.retain(|group| group.is_custom_list != Some(true));
+
+				let lists = fetch_lists(&session)?;
+
 				Ok((session, lists))
 			}));
 			thread_ctx.request_repaint();
