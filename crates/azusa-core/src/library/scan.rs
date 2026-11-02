@@ -36,18 +36,7 @@ pub fn scan(root: &Path) -> io::Result<Vec<LocalEpisode>> {
 			continue;
 		}
 
-		let Some(extension) = entry
-			.path()
-			.extension()
-			.and_then(|extension| extension.to_str())
-		else {
-			continue;
-		};
-
-		if !VIDEO_EXTENSIONS
-			.iter()
-			.any(|video| video.eq_ignore_ascii_case(extension))
-		{
+		if !is_video(entry.path()) {
 			continue;
 		}
 
@@ -66,6 +55,16 @@ pub fn scan(root: &Path) -> io::Result<Vec<LocalEpisode>> {
 	}
 
 	Ok(episodes)
+}
+
+pub(super) fn is_video(path: &Path) -> bool {
+	path.extension()
+		.and_then(|extension| extension.to_str())
+		.is_some_and(|extension| {
+			VIDEO_EXTENSIONS
+				.iter()
+				.any(|video| video.eq_ignore_ascii_case(extension))
+		})
 }
 
 #[cfg(test)]
