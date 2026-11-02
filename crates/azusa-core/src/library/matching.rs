@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use unicode_normalization::UnicodeNormalization;
 
-use crate::{anilist::MediaListGroup, library::LocalEpisode};
+use crate::{
+	anilist::MediaListGroup,
+	library::{LocalEpisode, parse_filename},
+};
 
 /// Groups downloaded episodes by the listed anime they match.
 /// Unknown or ambiguous titles are dropped.
@@ -16,6 +19,29 @@ pub fn match_library(
 	let index = title_index(&entries);
 
 	match_episodes(&index, episodes)
+}
+
+#[derive(Debug, PartialEq)]
+/// The listed anime and episode a video file belongs to.
+pub struct MatchedFile {
+	pub media_id: i32,
+	pub episode: u32,
+}
+
+/// Identifies a video file by its name.
+/// Returns `None` for unparseable names and unknown or ambiguous titles.
+#[must_use]
+pub fn match_file(lists: &[MediaListGroup], file_name: &str) -> Option<MatchedFile> {
+	let parsed = parse_filename(file_name)?;
+
+	let entries = anime_titles(lists);
+	let index = title_index(&entries);
+	let media_id = find_anime(&index, &parsed.title)?;
+
+	Some(MatchedFile {
+		media_id,
+		episode: parsed.episode,
+	})
 }
 
 /// An anime from the user's lists with the titles it can be matched by.
@@ -88,6 +114,14 @@ fn title_index(entries: &[AnimeTitles]) -> HashMap<String, TitleMatch> {
 	index
 }
 
+/// Returns the anime a title unambiguously belongs to.
+fn find_anime(index: &HashMap<String, TitleMatch>, title: &str) -> Option<i32> {
+	match index.get(&normalize_title(title)) {
+		Some(TitleMatch::Unique(id)) => Some(*id),
+		_ => None,
+	}
+}
+
 /// Groups episodes by the anime they unambiguously match, dropping the rest.
 fn match_episodes(
 	index: &HashMap<String, TitleMatch>,
@@ -96,12 +130,11 @@ fn match_episodes(
 	let mut episodes_by_anime: HashMap<i32, Vec<LocalEpisode>> = HashMap::new();
 
 	for episode in episodes {
-		let normalized = normalize_title(&episode.parsed.title);
-		let Some(TitleMatch::Unique(id)) = index.get(&normalized) else {
+		let Some(id) = find_anime(index, &episode.parsed.title) else {
 			continue;
 		};
 
-		episodes_by_anime.entry(*id).or_default().push(episode);
+		episodes_by_anime.entry(id).or_default().push(episode);
 	}
 
 	episodes_by_anime
@@ -120,7 +153,10 @@ fn normalize_title(title: &str) -> String {
 mod tests {
 	use std::path::PathBuf;
 
-	use crate::library::ParsedFile;
+	use crate::{
+		anilist::{Media, MediaList, MediaTitle},
+		library::ParsedFile,
+	};
 
 	use super::*;
 
@@ -265,5 +301,52 @@ mod tests {
 
 		assert_eq!(result.len(), 1);
 		assert_eq!(result[&186_497].len(), 2);
+	}
+
+	fn list_with(id: i32, romaji: &str) -> MediaListGroup {
+		let title = MediaTitle {
+			romaji: Some(romaji.to_string()),
+			english: None,
+			native: None,
+		};
+		let media = Media {
+			id,
+			id_mal: None,
+			title: Some(title),
+			episodes: None,
+			format: None,
+			season: None,
+			season_year: None,
+			cover_image: None,
+		};
+		let entry = MediaList {
+			id: 0,
+			media: Some(media),
+			score: None,
+			progress: None,
+			private: None,
+			status: None,
+			updated_at: None,
+		};
+		MediaListGroup {
+			entries: vec![entry],
+			is_custom_list: None,
+			status: None,
+		}
+	}
+
+	#[test]
+	fn matches_file_to_listed_anime() {
+		let lists = [list_with(186_497, "Koori no Jouheki")];
+		let file = "[Erai-raws] Koori no Jouheki - 06 [1080p][3722B06F].mkv";
+
+		assert_eq!(
+			match_file(&lists, file),
+			Some(MatchedFile {
+				media_id: 186_497,
+				episode: 6
+			})
+		);
+		assert_eq!(match_file(&lists, "[Erai-raws] Other Anime - 06.mkv"), None);
 	}
 }
