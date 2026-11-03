@@ -5,7 +5,7 @@ use std::{
 };
 
 use azusa_core::{
-	anilist::{self, AccessToken, MediaListGroup, MediaListStatus, Session},
+	anilist::{self, AccessToken, MediaList, MediaListGroup, MediaListStatus, Session},
 	library::{self, LocalEpisode, MatchedFile},
 };
 use eframe::egui;
@@ -25,9 +25,16 @@ enum AuthState {
 	Failed(anilist::Error),
 }
 
+#[derive(PartialEq)]
+enum View {
+	NowPlaying,
+	AnimeList,
+}
+
 struct Account {
 	session: Arc<Session>,
 	lists: Vec<MediaListGroup>,
+	view: View,
 	selected_status: MediaListStatus,
 	sync: ProgressSync,
 	error: Option<anilist::Error>,
@@ -43,6 +50,7 @@ impl Account {
 		Self {
 			session,
 			lists,
+			view: View::AnimeList,
 			selected_status: MediaListStatus::Current,
 			sync,
 			error: None,
@@ -82,6 +90,19 @@ impl Account {
 			entry.progress = Some(progress);
 		}
 		self.sync.send(change);
+	}
+
+	fn playing_entry(&self) -> Option<&MediaList> {
+		let playing = self.playing.as_ref()?;
+		self.lists
+			.iter()
+			.flat_map(|group| group.entries.iter())
+			.find(|entry| {
+				entry
+					.media
+					.as_ref()
+					.is_some_and(|media| media.id == playing.media_id)
+			})
 	}
 }
 
@@ -206,6 +227,16 @@ impl eframe::App for AzusaApp {
 			});
 		});
 
+		if let AuthState::LoggedIn(account) = &mut self.auth {
+			egui::Panel::left("sidebar")
+				.resizable(false)
+				.exact_size(120.0)
+				.show(ui, |ui| {
+					ui.selectable_value(&mut account.view, View::NowPlaying, "Now playing");
+					ui.selectable_value(&mut account.view, View::AnimeList, "Anime list");
+				});
+		}
+
 		egui::CentralPanel::default().show(ui, |ui| {
 			ui.heading("Azusa");
 
@@ -235,29 +266,92 @@ impl eframe::App for AzusaApp {
 						ui.colored_label(ui.visuals().error_fg_color, err.to_string());
 					}
 
-					ui.horizontal(|ui| {
-						for status in MediaListStatus::ALL {
-							ui.selectable_value(
-								&mut account.selected_status,
-								status,
-								status_label(status),
-							);
+					match account.view {
+						View::AnimeList => {
+							// Status selector
+							ui.horizontal(|ui| {
+								for status in MediaListStatus::ALL {
+									ui.selectable_value(
+										&mut account.selected_status,
+										status,
+										status_label(status),
+									);
+								}
+							});
+
+							let anime_list = account
+								.lists
+								.iter()
+								.find(|group| group.status == Some(account.selected_status));
+
+							if let Some(group) = anime_list {
+								ui.style_mut().interaction.selectable_labels = false;
+
+								if let Some(change) = anime_table::show(ui, group, matched) {
+									account.set_progress(change);
+								}
+							} else {
+								ui.label("No lists");
+							}
 						}
-					});
+						View::NowPlaying => {
+							if let Some(playing) = &account.playing
+								&& let Some(entry) = account.playing_entry()
+							{
+								let title = entry
+									.media
+									.as_ref()
+									.and_then(|media| media.title.as_ref())
+									.and_then(|title| title.romaji.as_deref())
+									.unwrap_or("Unknown title");
 
-					let anime_list = account
-						.lists
-						.iter()
-						.find(|group| group.status == Some(account.selected_status));
+								ui.heading(title);
+								ui.label(format!("Now playing: Episode {}", playing.episode));
 
-					if let Some(group) = anime_list {
-						ui.style_mut().interaction.selectable_labels = false;
+								let progress =
+									u32::try_from(entry.progress.unwrap_or(0)).unwrap_or(0);
+								let total = entry
+									.media
+									.as_ref()
+									.and_then(|media| media.episodes)
+									.and_then(|total| u32::try_from(total).ok())
+									.filter(|&total| total > 0);
+								let entry_id = entry.id;
+								let mut change = None;
 
-						if let Some(change) = anime_table::show(ui, group, matched) {
-							account.set_progress(change);
+								ui.horizontal(|ui| {
+									let minus =
+										ui.add_enabled(progress > 0, egui::Button::new("-"));
+									if minus.clicked() {
+										change = Some(ProgressChange {
+											entry_id,
+											progress: progress - 1,
+										});
+									}
+
+									ui.label(format!(
+										"{progress} / {}",
+										total.map_or("?".to_owned(), |total| total.to_string())
+									));
+
+									let can_increment = total.is_none_or(|total| progress < total);
+									let plus =
+										ui.add_enabled(can_increment, egui::Button::new("+"));
+									if plus.clicked() {
+										change = Some(ProgressChange {
+											entry_id,
+											progress: progress + 1,
+										});
+									}
+								});
+
+								if let Some(change) = change {
+									account.set_progress(change);
+								}
+							} else {
+								ui.label("Nothing playing");
+							}
 						}
-					} else {
-						ui.label("No lists");
 					}
 				}
 				AuthState::Failed(err) => {
