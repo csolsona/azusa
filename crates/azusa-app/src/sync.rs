@@ -3,7 +3,13 @@ use std::sync::{Arc, mpsc};
 use azusa_core::anilist::{self, MediaListGroup, Session};
 use eframe::egui;
 
-use crate::ui::anime_table::ProgressChange;
+/// A new progress value for a list entry, to be saved on `AniList`.
+#[derive(Debug)]
+pub struct ProgressChange {
+	pub entry_id: i32,
+	/// The total number of episodes watched
+	pub progress: u32,
+}
 
 /// Sends progress changes to `AniList` in order from a background thread.
 pub struct ProgressSync {

@@ -4,16 +4,12 @@ use azusa_core::{
 	anilist::{MediaFormat, MediaList, MediaListGroup, MediaSeason},
 	library::LocalEpisode,
 };
-use eframe::egui::{self, Layout};
+use eframe::egui;
 use egui_extras::{Column, TableBuilder, TableRow};
 
-const EDGE_MARGIN: f32 = 8.0;
+use crate::sync::ProgressChange;
 
-#[derive(Debug)]
-pub struct ProgressChange {
-	pub entry_id: i32,
-	pub progress: u32,
-}
+const EDGE_MARGIN: f32 = 8.0;
 
 pub fn show(
 	ui: &mut egui::Ui,
@@ -69,7 +65,7 @@ fn header_row(mut header: TableRow<'_, '_>) {
 		});
 	});
 	header.col(|ui| {
-		ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+		ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 			ui.strong("Season");
 		});
 	});
@@ -155,7 +151,7 @@ fn entry_row(
 
 	// Season
 	row.col(|ui| {
-		ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+		ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 			ui.label(format!("{season} {season_year}"));
 		});
 	});
