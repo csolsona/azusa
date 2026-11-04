@@ -8,7 +8,7 @@ use azusa_core::{
 	anilist::{self, AccessToken, MediaList, MediaListGroup, MediaListStatus, Session},
 	library::{self, LocalEpisode, MatchedFile},
 };
-use eframe::egui;
+use eframe::egui::{self, Align, Atom, Layout, menu::MenuButton};
 
 use crate::{
 	playback,
@@ -22,9 +22,25 @@ pub struct AzusaApp {
 	library: LibraryState,
 }
 
+fn apply_default_styles(ctx: &egui::Context) {
+	ctx.all_styles_mut(|style| {
+		let widgets = &mut style.visuals.widgets;
+		for state in [
+			&mut widgets.noninteractive,
+			&mut widgets.inactive,
+			&mut widgets.hovered,
+			&mut widgets.active,
+			&mut widgets.open,
+		] {
+			state.corner_radius = egui::CornerRadius::ZERO;
+		}
+	});
+}
+
 impl AzusaApp {
 	pub fn new(ctx: &egui::Context) -> Self {
 		let mut app = Self::default();
+		apply_default_styles(ctx);
 		app.start_scan(ctx);
 		match anilist::load_token() {
 			Ok(Some(token)) => app.spawn_session(ctx, move || Ok(token)),
@@ -129,22 +145,88 @@ impl AzusaApp {
 	}
 }
 
+fn chevron() -> Atom<'static> {
+	Atom::paint(egui::vec2(8.0, 4.0), |ui, args| {
+		// Text looks centered around its x-height, below the center of the line box.
+		let r = args.rect.translate(egui::vec2(0.0, 1.0));
+		let stroke = egui::Stroke::new(1.5, args.fallback_text_color);
+		ui.painter()
+			.line(vec![r.left_top(), r.center_bottom(), r.right_top()], stroke);
+	})
+}
+
+fn bar_frame(ui: &egui::Ui) -> egui::Frame {
+	let visuals = ui.visuals();
+	let fill = if visuals.dark_mode {
+		egui::Color32::from_gray(36)
+	} else {
+		visuals.panel_fill
+	};
+	egui::Frame::side_top_panel(ui.style()).fill(fill)
+}
+
 impl eframe::App for AzusaApp {
 	fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
 		self.poll(ui.ctx());
 
-		egui::Panel::top("top-panel").show(ui, |ui| {
-			egui::MenuBar::new().ui(ui, |ui| {
-				ui.menu_button("File", |ui| {
-					if ui.button("Test").clicked() {
-						log::info!("menu placeholder clicked");
-					}
+		if let AuthState::LoggedIn(account) = &self.auth {
+			egui::Panel::top("top-panel")
+				.frame(bar_frame(ui))
+				.show(ui, |ui| {
+					egui::MenuBar::new().ui(ui, |ui| {
+						if ui.button("Synchronize list").clicked() {
+							log::info!("Sync list");
+						}
+
+						if ui.button("Scan available episodes").clicked() {
+							log::info!("Scan episodes");
+						}
+
+						ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+							let account_name = account.session.viewer.name.as_str();
+							let button = egui::Button::new((account_name, chevron())).gap(5.0);
+							MenuButton::from_button(button).ui(ui, |ui| {
+								let text = egui::RichText::new("AniList profile ↗")
+									.underline()
+									.color(ui.visuals().hyperlink_color);
+								let url = format!(
+									"https://anilist.co/user/{}",
+									account.session.viewer.id
+								);
+
+								if ui.button(text).clicked() {
+									ui.open_url(egui::OpenUrl::new_tab(url));
+								}
+								ui.separator();
+								ui.add_enabled(false, egui::Button::new("Manage accounts"));
+							})
+						});
+					});
 				});
-			});
-		});
+		}
 
 		if let AuthState::LoggedIn(account) = &mut self.auth {
+			egui::Panel::bottom("status-bar")
+				.frame(bar_frame(ui))
+				.resizable(false)
+				.exact_size(24.0)
+				.show(ui, |ui| {
+					let error = match (&account.error, &self.library) {
+						(Some(err), _) => Some(err.to_string()),
+						(None, LibraryState::Failed(err)) => {
+							Some(format!("Library scan failed: {err}"))
+						}
+						_ => None,
+					};
+
+					if let Some(error) = error {
+						let text = egui::RichText::new(error).color(ui.visuals().error_fg_color);
+						ui.add(egui::Label::new(text).truncate());
+					}
+				});
+
 			egui::Panel::left("sidebar")
+				.frame(bar_frame(ui))
 				.resizable(false)
 				.exact_size(120.0)
 				.show(ui, |ui| {
@@ -153,35 +235,36 @@ impl eframe::App for AzusaApp {
 				});
 		}
 
-		egui::CentralPanel::default().show(ui, |ui| match &mut self.auth {
-			AuthState::LoggedOut => {
-				if ui.button("AniList login").clicked() {
-					self.start_login(ui.ctx());
-				}
-			}
-			AuthState::Waiting(_) => {
-				ui.horizontal(|ui| {
-					ui.spinner();
-					ui.label("Waiting for the browser…");
-				});
-			}
-			AuthState::LoggedIn(account) => {
-				if let Some(err) = &account.error {
-					ui.colored_label(ui.visuals().error_fg_color, err.to_string());
-				}
+		let list_open =
+			matches!(&self.auth, AuthState::LoggedIn(account) if account.view == View::AnimeList);
+		let margin = if list_open { 0 } else { 8 };
+		let frame = egui::Frame::central_panel(ui.style()).inner_margin(margin);
 
-				match account.view {
+		egui::CentralPanel::default()
+			.frame(frame)
+			.show(ui, |ui| match &mut self.auth {
+				AuthState::LoggedOut => {
+					if ui.button("AniList login").clicked() {
+						self.start_login(ui.ctx());
+					}
+				}
+				AuthState::Waiting(_) => {
+					ui.horizontal(|ui| {
+						ui.spinner();
+						ui.label("Waiting for the browser…");
+					});
+				}
+				AuthState::LoggedIn(account) => match account.view {
 					View::AnimeList => account.anime_list_view(ui, &self.library),
 					View::NowPlaying => account.now_playing_view(ui),
+				},
+				AuthState::Failed(err) => {
+					ui.colored_label(ui.visuals().error_fg_color, err.to_string());
+					if ui.button("Retry").clicked() {
+						self.start_login(ui.ctx());
+					}
 				}
-			}
-			AuthState::Failed(err) => {
-				ui.colored_label(ui.visuals().error_fg_color, err.to_string());
-				if ui.button("Retry").clicked() {
-					self.start_login(ui.ctx());
-				}
-			}
-		});
+			});
 	}
 }
 
@@ -290,12 +373,35 @@ impl Account {
 			_ => None,
 		};
 
-		// Status selector
-		ui.horizontal(|ui| {
+		let row = ui.horizontal(|ui| {
+			ui.spacing_mut().item_spacing.x = 0.0;
+			let mut selected_rect = None;
+
 			for status in MediaListStatus::ALL {
-				ui.selectable_value(&mut self.selected_status, status, status_label(status));
+				let selected = self.selected_status == status;
+				let response = status_tab(ui, status_label(status), selected);
+
+				if selected {
+					selected_rect = Some(response.rect);
+				}
+				if response.clicked() {
+					self.selected_status = status;
+				}
 			}
+
+			selected_rect
 		});
+
+		if let Some(tab) = row.inner {
+			let border = ui.visuals().widgets.noninteractive.bg_stroke;
+			let area = ui.clip_rect();
+			let painter = ui.painter();
+
+			if tab.left() > area.left() {
+				painter.hline(area.left()..=tab.left(), tab.bottom(), border);
+			}
+			painter.hline(tab.right()..=area.right(), tab.bottom(), border);
+		}
 
 		let anime_list = self
 			.lists
@@ -368,6 +474,45 @@ impl Account {
 			ui.label("Nothing playing");
 		}
 	}
+}
+
+fn status_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+	let response = ui
+		.scope(|ui| {
+			let visuals = ui.visuals_mut();
+			let (rest, hover) = if selected {
+				(visuals.panel_fill, visuals.panel_fill)
+			} else {
+				(
+					visuals.faint_bg_color,
+					visuals.selection.bg_fill.gamma_multiply(0.4),
+				)
+			};
+
+			let widgets = &mut visuals.widgets;
+			widgets.inactive.weak_bg_fill = rest;
+			for state in [&mut widgets.hovered, &mut widgets.active] {
+				state.weak_bg_fill = hover;
+				state.bg_stroke = egui::Stroke::NONE;
+			}
+
+			ui.add(egui::Button::new(label).min_size(egui::vec2(0.0, 22.0)))
+		})
+		.inner;
+
+	if selected {
+		let r = response.rect;
+		let border = ui.visuals().widgets.noninteractive.bg_stroke;
+		let emphasis = egui::Stroke::new(2.0, ui.visuals().strong_text_color());
+		let painter = ui.painter();
+		if r.left() > ui.clip_rect().left() {
+			painter.vline(r.left(), r.y_range(), border);
+		}
+		painter.vline(r.right(), r.y_range(), border);
+		painter.hline(r.x_range(), r.top(), emphasis);
+	}
+
+	response
 }
 
 fn status_label(status: MediaListStatus) -> &'static str {

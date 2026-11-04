@@ -7,6 +7,8 @@ use azusa_core::{
 use eframe::egui::{self, Layout};
 use egui_extras::{Column, TableBuilder, TableRow};
 
+const EDGE_MARGIN: f32 = 8.0;
+
 #[derive(Debug)]
 pub struct ProgressChange {
 	pub entry_id: i32,
@@ -20,31 +22,35 @@ pub fn show(
 ) -> Option<ProgressChange> {
 	let mut change = None;
 
-	TableBuilder::new(ui)
-		.striped(true)
-		.sense(egui::Sense::click())
-		.cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-		.column(Column::remainder().clip(true).at_least(200.0))
-		.column(Column::auto())
-		.column(Column::exact(50.0))
-		.column(Column::exact(60.0))
-		.column(Column::exact(100.0))
-		.column(Column::exact(100.0))
-		.header(22.0, header_row)
-		.body(|body| {
-			body.rows(20.0, group.entries.len(), |row| {
-				let entry = &group.entries[row.index()];
-				if let Some(row_change) = entry_row(row, entry, matched) {
-					change = Some(row_change);
-				}
+	egui::ScrollArea::horizontal().show(ui, |ui| {
+		TableBuilder::new(ui)
+			.striped(true)
+			.auto_shrink(false)
+			.sense(egui::Sense::click())
+			.cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+			.column(Column::exact(360.0))
+			.column(Column::exact(205.0))
+			.column(Column::exact(50.0))
+			.column(Column::exact(60.0))
+			.column(Column::exact(100.0))
+			.column(Column::exact(100.0))
+			.header(22.0, header_row)
+			.body(|body| {
+				body.rows(20.0, group.entries.len(), |row| {
+					let entry = &group.entries[row.index()];
+					if let Some(row_change) = entry_row(row, entry, matched) {
+						change = Some(row_change);
+					}
+				});
 			});
-		});
+	});
 
 	change
 }
 
 fn header_row(mut header: TableRow<'_, '_>) {
 	header.col(|ui| {
+		ui.add_space(EDGE_MARGIN);
 		ui.strong("Anime title");
 	});
 	header.col(|ui| {
@@ -125,6 +131,7 @@ fn entry_row(
 
 	// Title
 	row.col(|ui| {
+		ui.add_space(EDGE_MARGIN);
 		ui.label(title);
 	});
 
@@ -192,7 +199,7 @@ fn progress_cell(
 
 	let bar = progress_bar(ui, progress, total, episodes);
 
-	let size = egui::vec2(20.0, ui.available_height());
+	let size = egui::vec2(24.0, ui.available_height());
 	ui.allocate_ui_with_layout(
 		size,
 		egui::Layout::right_to_left(egui::Align::Center),
