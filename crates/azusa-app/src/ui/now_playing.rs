@@ -1,11 +1,11 @@
-use azusa_core::{anilist::MediaList, library::MatchedFile};
+use azusa_core::anilist::MediaList;
 use eframe::egui;
 
-use crate::sync::ProgressChange;
+use crate::{playback::NowPlaying, sync::ProgressChange};
 
 pub fn show(
 	ui: &mut egui::Ui,
-	playing: Option<&MatchedFile>,
+	playing: Option<&NowPlaying>,
 	entry: Option<&MediaList>,
 ) -> Option<ProgressChange> {
 	if let Some(playing) = playing
@@ -19,7 +19,13 @@ pub fn show(
 			.unwrap_or("Unknown title");
 
 		ui.heading(title);
-		ui.label(format!("Now playing: Episode {}", playing.episode));
+
+		let state = if playing.open {
+			"Now playing"
+		} else {
+			"Last played"
+		};
+		ui.label(format!("{state}: Episode {}", playing.file.episode));
 
 		let progress = u32::try_from(entry.progress.unwrap_or(0)).unwrap_or(0);
 		let total = entry

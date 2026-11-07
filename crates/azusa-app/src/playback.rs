@@ -1,9 +1,15 @@
 use std::{sync::mpsc, thread, time::Duration};
 
-use azusa_core::library;
+use azusa_core::library::{self, MatchedFile};
 use eframe::egui;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+#[derive(Debug)]
+pub struct NowPlaying {
+	pub file: MatchedFile,
+	pub open: bool,
+}
 
 /// Monitors the video open in a player and sends its file name whenever it changes.
 pub fn spawn_monitor(ctx: &egui::Context) -> mpsc::Receiver<Option<String>> {

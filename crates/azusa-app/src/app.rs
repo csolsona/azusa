@@ -5,13 +5,13 @@ use std::{
 
 use azusa_core::{
 	anilist::{self, AccessToken, MediaList, MediaListGroup, MediaListStatus, Session},
-	library::{self, LocalEpisode, MatchedFile},
+	library::{self, LocalEpisode},
 };
 use eframe::egui;
 
 use crate::{
 	config::Config,
-	playback,
+	playback::{self, NowPlaying},
 	sync::{ProgressChange, ProgressSync, SyncFailure, fetch_lists},
 	ui::{
 		anime_list, now_playing,
@@ -242,7 +242,7 @@ struct Account {
 	sync: ProgressSync,
 	error: Option<anilist::Error>,
 	playback: mpsc::Receiver<Option<String>>,
-	playing: Option<MatchedFile>,
+	playing: Option<NowPlaying>,
 }
 
 impl Account {
@@ -273,7 +273,17 @@ impl Account {
 		}
 
 		if let Ok(file_name) = self.playback.try_recv() {
-			self.playing = file_name.and_then(|name| library::match_file(&self.lists, &name));
+			match file_name.and_then(|name| library::match_file(&self.lists, &name)) {
+				Some(file) => {
+					self.playing = Some(NowPlaying { file, open: true });
+					self.view = View::NowPlaying;
+				}
+				None => {
+					if let Some(playing) = &mut self.playing {
+						playing.open = false;
+					}
+				}
+			}
 			log::info!("now playing: {:?}", self.playing);
 		}
 	}
@@ -304,7 +314,7 @@ impl Account {
 				entry
 					.media
 					.as_ref()
-					.is_some_and(|media| media.id == playing.media_id)
+					.is_some_and(|media| media.id == playing.file.media_id)
 			})
 	}
 
