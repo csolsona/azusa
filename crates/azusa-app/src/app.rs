@@ -17,7 +17,8 @@ use crate::{
 		anime_list, now_playing,
 		settings::Settings,
 		sidebar::{self, View},
-		statusbar, style, toolbar,
+		statusbar::{self, Status},
+		style, toolbar,
 	},
 };
 
@@ -29,6 +30,7 @@ pub struct AzusaApp {
 	library: LibraryState,
 	settings: Settings,
 	config: Config,
+	status: Option<Status>,
 }
 
 impl AzusaApp {
@@ -71,8 +73,10 @@ impl AzusaApp {
 			self.scan = None;
 		}
 
-		if let AuthState::LoggedIn(account) = &mut self.auth {
-			account.poll();
+		if let AuthState::LoggedIn(account) = &mut self.auth
+			&& let Some(status) = account.poll()
+		{
+			self.status = Some(status);
 		}
 
 		if let AuthState::LoggedIn(Account { lists, .. }) = &self.auth
@@ -81,11 +85,14 @@ impl AzusaApp {
 			let episodes = std::mem::take(episodes);
 			let matched = library::match_library(lists, episodes);
 
-			log::info!(
-				"{} episodes matched across {} anime",
-				matched.values().map(Vec::len).sum::<usize>(),
-				matched.len(),
-			);
+			let total_episodes: usize = matched.values().map(Vec::len).sum();
+			let total_anime: usize = matched.len();
+
+			self.status = Some(Status::Scanned {
+				episodes: total_episodes,
+			});
+
+			log::info!("{total_episodes} episodes matched across {total_anime} anime");
 
 			self.library = LibraryState::Matched(matched);
 		}
@@ -127,6 +134,8 @@ impl AzusaApp {
 
 	/// Scans the library folders in a background thread.
 	fn start_scan(&mut self, ctx: &egui::Context) {
+		self.status = Some(Status::Scanning);
+
 		let (tx, rx) = mpsc::channel();
 		let thread_ctx = ctx.clone();
 		let folders = self.config.library.folders.clone();
@@ -155,8 +164,8 @@ impl eframe::App for AzusaApp {
 		let action = if let AuthState::LoggedIn(account) = &mut self.auth {
 			let action = toolbar::show(ui, &account.session.viewer);
 
-			let error = account.error.as_ref().map(ToString::to_string);
-			statusbar::show(ui, error);
+			statusbar::show(ui, self.status.as_ref());
+
 			sidebar::show(ui, &mut account.view);
 
 			action
@@ -168,6 +177,7 @@ impl eframe::App for AzusaApp {
 			Some(toolbar::Action::Sync) => {
 				if let AuthState::LoggedIn(account) = &self.auth {
 					account.sync.reload();
+					self.status = Some(Status::Syncing);
 				}
 			}
 			Some(toolbar::Action::Scan) => self.start_scan(ui.ctx()),
@@ -244,7 +254,6 @@ struct Account {
 	view: View,
 	selected_status: MediaListStatus,
 	sync: ListSync,
-	error: Option<anilist::Error>,
 	playback: mpsc::Receiver<Option<String>>,
 	playing: Option<NowPlaying>,
 }
@@ -260,32 +269,31 @@ impl Account {
 			view: View::AnimeList,
 			selected_status: MediaListStatus::Current,
 			sync,
-			error: None,
 			playback: playback::spawn_monitor(ctx),
 			playing: None,
 		}
 	}
 
-	fn poll(&mut self) {
-		match self.sync.poll() {
+	fn poll(&mut self) -> Option<Status> {
+		let status = match self.sync.poll() {
 			Some(SyncEvent::ProgressFailed(SyncFailure { error, lists })) => {
 				log::warn!("progress update failed: {error}");
-				self.error = Some(error);
 
 				if let Some(lists) = lists {
 					self.lists = lists;
 				}
+				Some(Status::Error(error.to_string()))
 			}
 			Some(SyncEvent::Reloaded(Ok(lists))) => {
 				self.lists = lists;
-				self.error = None;
+				Some(Status::Synced)
 			}
 			Some(SyncEvent::Reloaded(Err(error))) => {
 				log::warn!("reloading lists failed: {error}");
-				self.error = Some(error);
+				Some(Status::Error(error.to_string()))
 			}
-			None => {}
-		}
+			None => None,
+		};
 
 		if let Ok(file_name) = self.playback.try_recv() {
 			match file_name.and_then(|name| library::match_file(&self.lists, &name)) {
@@ -301,11 +309,11 @@ impl Account {
 			}
 			log::info!("now playing: {:?}", self.playing);
 		}
+
+		status
 	}
 
 	fn set_progress(&mut self, change: ProgressChange) {
-		self.error = None;
-
 		let Ok(progress) = i32::try_from(change.progress) else {
 			return;
 		};
