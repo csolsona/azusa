@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod config;
 mod playback;
 mod sync;
 mod ui;
@@ -26,6 +27,6 @@ fn main() -> eframe::Result {
 	eframe::run_native(
 		"Azusa",
 		options,
-		Box::new(|cc| Ok(Box::new(AzusaApp::new(&cc.egui_ctx)))),
+		Box::new(|cc| Ok(Box::new(AzusaApp::new(cc)))),
 	)
 }

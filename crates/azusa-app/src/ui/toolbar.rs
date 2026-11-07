@@ -3,17 +3,29 @@ use eframe::egui;
 
 use super::style;
 
-pub fn show(ui: &mut egui::Ui, viewer: &Viewer) {
+pub enum Action {
+	Sync,
+	Scan,
+	OpenSettings,
+}
+
+pub fn show(ui: &mut egui::Ui, viewer: &Viewer) -> Option<Action> {
+	let mut action = None;
+
 	egui::Panel::top("toolbar")
 		.frame(style::bar_frame(ui))
 		.show(ui, |ui| {
 			egui::MenuBar::new().ui(ui, |ui| {
 				if ui.button("Synchronize list").clicked() {
-					log::info!("Sync list");
+					action = Some(Action::Sync);
 				}
 
 				if ui.button("Scan available episodes").clicked() {
-					log::info!("Scan episodes");
+					action = Some(Action::Scan);
+				}
+
+				if ui.button("Settings").clicked() {
+					action = Some(Action::OpenSettings);
 				}
 
 				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -34,6 +46,8 @@ pub fn show(ui: &mut egui::Ui, viewer: &Viewer) {
 				});
 			});
 		});
+
+	action
 }
 
 fn chevron() -> egui::Atom<'static> {

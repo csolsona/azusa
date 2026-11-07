@@ -1,6 +1,5 @@
 use std::{
 	collections::HashMap,
-	env, io,
 	sync::{Arc, mpsc},
 };
 
@@ -11,10 +10,12 @@ use azusa_core::{
 use eframe::egui;
 
 use crate::{
+	config::Config,
 	playback,
 	sync::{ProgressChange, ProgressSync, SyncFailure, fetch_lists},
 	ui::{
 		anime_list, now_playing,
+		settings::Settings,
 		sidebar::{self, View},
 		statusbar, style, toolbar,
 	},
@@ -23,14 +24,27 @@ use crate::{
 #[derive(Default)]
 pub struct AzusaApp {
 	auth: AuthState,
+	/// Kept apart from `library` so the previous results stay visible while rescanning.
+	scan: Option<mpsc::Receiver<Vec<LocalEpisode>>>,
 	library: LibraryState,
+	settings: Settings,
+	config: Config,
 }
 
 impl AzusaApp {
-	pub fn new(ctx: &egui::Context) -> Self {
+	pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+		let ctx = &cc.egui_ctx;
 		let mut app = Self::default();
+
+		if let Some(storage) = cc.storage
+			&& let Some(config) = eframe::get_value(storage, eframe::APP_KEY)
+		{
+			app.config = config;
+		}
+
 		style::apply_default_styles(ctx);
 		app.start_scan(ctx);
+
 		match anilist::load_token() {
 			Ok(Some(token)) => app.spawn_session(ctx, move || Ok(token)),
 			Ok(None) => {}
@@ -50,16 +64,11 @@ impl AzusaApp {
 			};
 		}
 
-		if let LibraryState::Scanning(rx) = &self.library
-			&& let Ok(result) = rx.try_recv()
+		if let Some(rx) = &self.scan
+			&& let Ok(episodes) = rx.try_recv()
 		{
-			self.library = match result {
-				Ok(episodes) => LibraryState::Scanned(episodes),
-				Err(err) => {
-					log::warn!("library scan failed: {err}");
-					LibraryState::Failed(err)
-				}
-			};
+			self.library = LibraryState::Scanned(episodes);
+			self.scan = None;
 		}
 
 		if let AuthState::LoggedIn(account) = &mut self.auth {
@@ -116,49 +125,59 @@ impl AzusaApp {
 		self.auth = AuthState::Waiting(rx);
 	}
 
-	/// Scans the library directory in a background thread.
+	/// Scans the library folders in a background thread.
 	fn start_scan(&mut self, ctx: &egui::Context) {
 		let (tx, rx) = mpsc::channel();
 		let thread_ctx = ctx.clone();
-
-		// TODO: hardcoded shortcut until settings menu exists
-		let dir = env::home_dir()
-			.expect("home directory should exist")
-			.join("downloads");
+		let folders = self.config.library.folders.clone();
 
 		std::thread::spawn(move || {
-			let _ = tx.send(library::scan(&dir));
+			let mut episodes = Vec::new();
+
+			for folder in &folders {
+				match library::scan(folder) {
+					Ok(found) => episodes.extend(found),
+					Err(err) => log::warn!("skipping folder {}: {err}", folder.display()),
+				}
+			}
+
+			let _ = tx.send(episodes);
 			thread_ctx.request_repaint();
 		});
-		self.library = LibraryState::Scanning(rx);
+		self.scan = Some(rx);
 	}
 }
 
 impl eframe::App for AzusaApp {
-	fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+	fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
 		self.poll(ui.ctx());
 
-		if let AuthState::LoggedIn(account) = &mut self.auth {
-			toolbar::show(ui, &account.session.viewer);
+		let action = if let AuthState::LoggedIn(account) = &mut self.auth {
+			let action = toolbar::show(ui, &account.session.viewer);
 
-			let error = match (&account.error, &self.library) {
-				(Some(err), _) => Some(err.to_string()),
-				(None, LibraryState::Failed(err)) => Some(format!("Library scan failed: {err}")),
-				_ => None,
-			};
-
+			let error = account.error.as_ref().map(ToString::to_string);
 			statusbar::show(ui, error);
-
 			sidebar::show(ui, &mut account.view);
+
+			action
+		} else {
+			None
+		};
+
+		match action {
+			Some(toolbar::Action::Sync) => log::info!("Sync"),
+			Some(toolbar::Action::Scan) => self.start_scan(ui.ctx()),
+			Some(toolbar::Action::OpenSettings) => self.settings.open = true,
+			None => {}
 		}
 
 		let list_open =
 			matches!(&self.auth, AuthState::LoggedIn(account) if account.view == View::AnimeList);
 		let margin = if list_open { 0 } else { 8 };
-		let frame = egui::Frame::central_panel(ui.style()).inner_margin(margin);
+		let panel_frame = egui::Frame::central_panel(ui.style()).inner_margin(margin);
 
 		egui::CentralPanel::default()
-			.frame(frame)
+			.frame(panel_frame)
 			.show(ui, |ui| match &mut self.auth {
 				AuthState::LoggedOut => {
 					if ui.button("AniList login").clicked() {
@@ -182,6 +201,19 @@ impl eframe::App for AzusaApp {
 					}
 				}
 			});
+
+		if self.settings.show(ui, &mut self.config) {
+			if let Some(storage) = frame.storage_mut() {
+				self.save(storage);
+				storage.flush();
+			}
+
+			self.start_scan(ui.ctx());
+		}
+	}
+
+	fn save(&mut self, storage: &mut dyn eframe::Storage) {
+		eframe::set_value(storage, eframe::APP_KEY, &self.config);
 	}
 }
 
@@ -198,10 +230,8 @@ enum AuthState {
 enum LibraryState {
 	#[default]
 	NotScanned,
-	Scanning(mpsc::Receiver<io::Result<Vec<LocalEpisode>>>),
 	Scanned(Vec<LocalEpisode>),
 	Matched(HashMap<i32, Vec<LocalEpisode>>),
-	Failed(io::Error),
 }
 
 struct Account {

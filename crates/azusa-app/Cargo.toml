@@ -11,6 +11,8 @@ env_logger.workspace = true
 jiff.workspace = true
 log.workspace = true
 open.workspace = true
+rfd.workspace = true
+serde.workspace = true
 
 [[bin]]
 name = "azusa"
