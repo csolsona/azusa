@@ -12,7 +12,7 @@ use eframe::egui;
 use crate::{
 	config::Config,
 	playback::{self, NowPlaying},
-	sync::{ProgressChange, ProgressSync, SyncFailure, fetch_lists},
+	sync::{ListSync, ProgressChange, SyncEvent, SyncFailure, fetch_lists},
 	ui::{
 		anime_list, now_playing,
 		settings::Settings,
@@ -165,7 +165,11 @@ impl eframe::App for AzusaApp {
 		};
 
 		match action {
-			Some(toolbar::Action::Sync) => log::info!("Sync"),
+			Some(toolbar::Action::Sync) => {
+				if let AuthState::LoggedIn(account) = &self.auth {
+					account.sync.reload();
+				}
+			}
 			Some(toolbar::Action::Scan) => self.start_scan(ui.ctx()),
 			Some(toolbar::Action::OpenSettings) => self.settings.open = true,
 			None => {}
@@ -239,7 +243,7 @@ struct Account {
 	lists: Vec<MediaListGroup>,
 	view: View,
 	selected_status: MediaListStatus,
-	sync: ProgressSync,
+	sync: ListSync,
 	error: Option<anilist::Error>,
 	playback: mpsc::Receiver<Option<String>>,
 	playing: Option<NowPlaying>,
@@ -248,7 +252,7 @@ struct Account {
 impl Account {
 	fn new(ctx: &egui::Context, session: Session, lists: Vec<MediaListGroup>) -> Self {
 		let session = Arc::new(session);
-		let sync = ProgressSync::spawn(ctx, Arc::clone(&session));
+		let sync = ListSync::spawn(ctx, Arc::clone(&session));
 
 		Self {
 			session,
@@ -263,13 +267,24 @@ impl Account {
 	}
 
 	fn poll(&mut self) {
-		if let Some(SyncFailure { error, lists }) = self.sync.poll_error() {
-			log::warn!("progress update failed: {error}");
-			self.error = Some(error);
+		match self.sync.poll() {
+			Some(SyncEvent::ProgressFailed(SyncFailure { error, lists })) => {
+				log::warn!("progress update failed: {error}");
+				self.error = Some(error);
 
-			if let Some(lists) = lists {
-				self.lists = lists;
+				if let Some(lists) = lists {
+					self.lists = lists;
+				}
 			}
+			Some(SyncEvent::Reloaded(Ok(lists))) => {
+				self.lists = lists;
+				self.error = None;
+			}
+			Some(SyncEvent::Reloaded(Err(error))) => {
+				log::warn!("reloading lists failed: {error}");
+				self.error = Some(error);
+			}
+			None => {}
 		}
 
 		if let Ok(file_name) = self.playback.try_recv() {

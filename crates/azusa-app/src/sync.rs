@@ -3,6 +3,18 @@ use std::sync::{Arc, mpsc};
 use azusa_core::anilist::{self, MediaListGroup, Session};
 use eframe::egui;
 
+/// Work queued for the sync thread.
+enum Command {
+	Progress(ProgressChange),
+	Reload,
+}
+
+/// A result sent back from the sync thread.
+pub enum SyncEvent {
+	ProgressFailed(SyncFailure),
+	Reloaded(Result<Vec<MediaListGroup>, anilist::Error>),
+}
+
 /// A new progress value for a list entry, to be saved on `AniList`.
 #[derive(Debug)]
 pub struct ProgressChange {
@@ -11,48 +23,61 @@ pub struct ProgressChange {
 	pub progress: u32,
 }
 
-/// Sends progress changes to `AniList` in order from a background thread.
-pub struct ProgressSync {
-	tx: mpsc::Sender<ProgressChange>,
-	error_rx: mpsc::Receiver<SyncFailure>,
-}
-
 /// A failed progress update. Also contains the lists reloaded after it if the reload worked.
 pub struct SyncFailure {
 	pub error: anilist::Error,
 	pub lists: Option<Vec<MediaListGroup>>,
 }
 
-impl ProgressSync {
+/// Saves progress changes and reloads the lists in order from a background thread.
+pub struct ListSync {
+	tx: mpsc::Sender<Command>,
+	event_rx: mpsc::Receiver<SyncEvent>,
+}
+
+impl ListSync {
 	pub fn spawn(ctx: &egui::Context, session: Arc<Session>) -> Self {
-		let (tx, commands) = mpsc::channel::<ProgressChange>();
-		let (error_tx, error_rx) = mpsc::channel();
+		let (tx, commands) = mpsc::channel::<Command>();
+		let (event_tx, event_rx) = mpsc::channel();
 		let ctx = ctx.clone();
 		std::thread::spawn(move || {
-			for change in &commands {
-				let Ok(progress) = i32::try_from(change.progress) else {
-					continue;
-				};
-				if let Err(err) = session.update_progress(change.entry_id, progress) {
-					// Drop pending changes so AniList history has no gaps.
-					commands.try_iter().for_each(drop);
-					let lists = fetch_lists(&session)
-						.inspect_err(|err| log::warn!("reloading lists failed: {err}"))
-						.ok();
-					let _ = error_tx.send(SyncFailure { error: err, lists });
-					ctx.request_repaint();
+			for command in &commands {
+				match command {
+					Command::Reload => {
+						let _ = event_tx.send(SyncEvent::Reloaded(fetch_lists(&session)));
+						ctx.request_repaint();
+					}
+					Command::Progress(change) => {
+						let Ok(progress) = i32::try_from(change.progress) else {
+							continue;
+						};
+						if let Err(err) = session.update_progress(change.entry_id, progress) {
+							// Drop pending changes so AniList history has no gaps.
+							commands.try_iter().for_each(drop);
+							let lists = fetch_lists(&session)
+								.inspect_err(|err| log::warn!("reloading lists failed: {err}"))
+								.ok();
+							let _ = event_tx
+								.send(SyncEvent::ProgressFailed(SyncFailure { error: err, lists }));
+							ctx.request_repaint();
+						}
+					}
 				}
 			}
 		});
-		Self { tx, error_rx }
+		Self { tx, event_rx }
 	}
 
 	pub fn send(&self, change: ProgressChange) {
-		let _ = self.tx.send(change);
+		let _ = self.tx.send(Command::Progress(change));
 	}
 
-	pub fn poll_error(&self) -> Option<SyncFailure> {
-		self.error_rx.try_recv().ok()
+	pub fn reload(&self) {
+		let _ = self.tx.send(Command::Reload);
+	}
+
+	pub fn poll(&self) -> Option<SyncEvent> {
+		self.event_rx.try_recv().ok()
 	}
 }
 
