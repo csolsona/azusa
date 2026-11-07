@@ -13,6 +13,7 @@ log.workspace = true
 open.workspace = true
 rfd.workspace = true
 serde.workspace = true
+directories.workspace = true
 
 [[bin]]
 name = "azusa"

@@ -26,11 +26,12 @@ unicode-normalization = "0.1.26"
 open = "5"
 rfd = "0.17.2"
 serde = { version = "1", features = ["derive"] }
+directories = "6"
 
 [profile.release]
 lto = true
 codegen-units = 1
-strip = true
+strip = "debuginfo"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

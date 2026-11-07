@@ -3,6 +3,7 @@
 
 mod app;
 mod config;
+mod logging;
 mod playback;
 mod sync;
 mod ui;
@@ -11,13 +12,7 @@ use crate::app::AzusaApp;
 use eframe::egui;
 
 fn main() -> eframe::Result {
-	let default_filter = if cfg!(debug_assertions) {
-		"azusa=debug"
-	} else {
-		"azusa=warn"
-	};
-	env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter))
-		.init();
+	logging::init();
 
 	let options = eframe::NativeOptions {
 		viewport: egui::ViewportBuilder::default().with_inner_size([1056.0, 660.0]),

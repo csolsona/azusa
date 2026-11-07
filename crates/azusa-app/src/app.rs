@@ -55,6 +55,14 @@ impl AzusaApp {
 		app
 	}
 
+	fn set_status(&mut self, status: Status) {
+		match &status {
+			Status::Error(error) => log::warn!("{error}"),
+			other => log::info!("{other:?}"),
+		}
+		self.status = Some(status);
+	}
+
 	/// Applies the results of background work to the app state.
 	fn poll(&mut self, ctx: &egui::Context) {
 		if let AuthState::Waiting(rx) = &self.auth
@@ -76,7 +84,7 @@ impl AzusaApp {
 		if let AuthState::LoggedIn(account) = &mut self.auth
 			&& let Some(status) = account.poll()
 		{
-			self.status = Some(status);
+			self.set_status(status);
 		}
 
 		if let AuthState::LoggedIn(Account { lists, .. }) = &self.auth
@@ -88,7 +96,7 @@ impl AzusaApp {
 			let total_episodes: usize = matched.values().map(Vec::len).sum();
 			let total_anime: usize = matched.len();
 
-			self.status = Some(Status::Scanned {
+			self.set_status(Status::Scanned {
 				episodes: total_episodes,
 			});
 
@@ -134,7 +142,7 @@ impl AzusaApp {
 
 	/// Scans the library folders in a background thread.
 	fn start_scan(&mut self, ctx: &egui::Context) {
-		self.status = Some(Status::Scanning);
+		self.set_status(Status::Scanning);
 
 		let (tx, rx) = mpsc::channel();
 		let thread_ctx = ctx.clone();
@@ -177,7 +185,7 @@ impl eframe::App for AzusaApp {
 			Some(toolbar::Action::Sync) => {
 				if let AuthState::LoggedIn(account) = &self.auth {
 					account.sync.reload();
-					self.status = Some(Status::Syncing);
+					self.set_status(Status::Syncing);
 				}
 			}
 			Some(toolbar::Action::Scan) => self.start_scan(ui.ctx()),
@@ -277,20 +285,17 @@ impl Account {
 	fn poll(&mut self) -> Option<Status> {
 		let status = match self.sync.poll() {
 			Some(SyncEvent::ProgressFailed(SyncFailure { error, lists })) => {
-				log::warn!("progress update failed: {error}");
-
 				if let Some(lists) = lists {
 					self.lists = lists;
 				}
-				Some(Status::Error(error.to_string()))
+				Some(Status::Error(format!("Progress update failed: {error}")))
 			}
 			Some(SyncEvent::Reloaded(Ok(lists))) => {
 				self.lists = lists;
 				Some(Status::Synced)
 			}
 			Some(SyncEvent::Reloaded(Err(error))) => {
-				log::warn!("reloading lists failed: {error}");
-				Some(Status::Error(error.to_string()))
+				Some(Status::Error(format!("Sync failed: {error}")))
 			}
 			None => None,
 		};

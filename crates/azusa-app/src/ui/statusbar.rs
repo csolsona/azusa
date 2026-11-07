@@ -2,6 +2,7 @@ use eframe::egui;
 
 use super::style;
 
+#[derive(Debug)]
 pub enum Status {
 	Scanning,
 	Scanned { episodes: usize },
