@@ -30,9 +30,12 @@ serde = { version = "1", features = ["derive"] }
 directories = "6"
 
 [profile.release]
+strip = "debuginfo"
+
+[profile.dist]
+inherits = "release"
 lto = true
 codegen-units = 1
-strip = "debuginfo"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

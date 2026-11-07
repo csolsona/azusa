@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Azusa
+Comment=Track your anime library on AniList
+Exec=azusa
+Terminal=false
+Categories=AudioVideo;Video;
+StartupWMClass=azusa

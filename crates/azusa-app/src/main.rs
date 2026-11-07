@@ -15,7 +15,9 @@ fn main() -> eframe::Result {
 	logging::init();
 
 	let options = eframe::NativeOptions {
-		viewport: egui::ViewportBuilder::default().with_inner_size([1056.0, 660.0]),
+		viewport: egui::ViewportBuilder::default()
+			.with_inner_size([1056.0, 660.0])
+			.with_app_id("azusa"),
 		..Default::default()
 	};
 
