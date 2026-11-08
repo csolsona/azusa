@@ -81,9 +81,26 @@ impl ListSync {
 	}
 }
 
-/// Fetches the anime lists the app supports.
+/// Fetches the anime lists the app supports, with one group per status.
 pub fn fetch_lists(session: &Session) -> Result<Vec<MediaListGroup>, anilist::Error> {
 	let mut lists = session.anime_lists()?;
 	lists.retain(|group| group.is_custom_list != Some(true));
-	Ok(lists)
+
+	let mut merged: Vec<MediaListGroup> = Vec::new();
+	for group in lists {
+		if let Some(existing) = merged
+			.iter_mut()
+			.find(|existing| existing.status == group.status)
+		{
+			existing.entries.extend(group.entries);
+		} else {
+			merged.push(group);
+		}
+	}
+
+	for group in &mut merged {
+		group.entries.sort_by_key(|entry| entry.id);
+	}
+
+	Ok(merged)
 }

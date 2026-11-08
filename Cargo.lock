@@ -520,7 +520,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "azusa-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "azusa-core",
  "directories",
@@ -536,7 +536,7 @@ dependencies = [
 
 [[package]]
 name = "azusa-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anitomy-ng",
  "cynic",
