@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::{
-	config::{Config, LibraryConfig},
+	config::{AutoUpdateConfig, Config, LibraryConfig, PlaybackConfig, ProgressUpdate},
 	ui::style,
 };
 
@@ -13,6 +13,7 @@ pub struct Settings {
 	draft: Option<Config>,
 
 	library_page: LibraryPage,
+	playback_page: PlaybackPage,
 }
 
 #[derive(Default, PartialEq)]
@@ -20,6 +21,7 @@ enum SettingsView {
 	Accounts,
 	#[default]
 	Library,
+	Playback,
 }
 
 impl Settings {
@@ -48,6 +50,7 @@ impl Settings {
 					.show(ui, |ui| {
 						ui.selectable_value(&mut self.view, SettingsView::Accounts, "Accounts");
 						ui.selectable_value(&mut self.view, SettingsView::Library, "Library");
+						ui.selectable_value(&mut self.view, SettingsView::Playback, "Playback");
 					});
 
 				egui::Panel::bottom("settings_actions")
@@ -79,11 +82,15 @@ impl Settings {
 						SettingsView::Library => {
 							self.library_page.show(ui, &mut draft.library);
 						}
+						SettingsView::Playback => {
+							self.playback_page.show(ui, &mut draft.playback);
+						}
 					});
 
 				if close {
 					self.draft = None;
 					self.library_page = LibraryPage::default();
+					self.playback_page = PlaybackPage::default();
 					self.open = false;
 				}
 
@@ -137,6 +144,62 @@ impl LibraryPage {
 				library.folders.remove(i);
 				self.selected = None;
 			}
+		});
+	}
+}
+
+#[derive(Default)]
+struct PlaybackPage {
+	last_auto_update: AutoUpdateConfig,
+}
+
+impl PlaybackPage {
+	fn show(&mut self, ui: &mut egui::Ui, playback: &mut PlaybackConfig) {
+		ui.heading("Playback");
+
+		ui.strong("List updates");
+		egui::Frame::group(ui.style()).show(ui, |ui| {
+			let mut auto_update = matches!(playback.progress_update, ProgressUpdate::Auto(_));
+			if ui
+				.checkbox(&mut auto_update, "Update progress automatically")
+				.changed()
+			{
+				if auto_update {
+					playback.progress_update = ProgressUpdate::Auto(self.last_auto_update.clone());
+				} else {
+					if let ProgressUpdate::Auto(config) = &playback.progress_update {
+						self.last_auto_update = config.clone();
+					}
+					playback.progress_update = ProgressUpdate::Manual;
+				}
+			}
+
+			let required_percent = match &mut playback.progress_update {
+				ProgressUpdate::Auto(config) => &mut config.required_percent,
+				ProgressUpdate::Manual => &mut self.last_auto_update.required_percent,
+			};
+
+			let text_color = ui.visuals().widgets.inactive.text_color();
+			ui.add_enabled_ui(auto_update, |ui| {
+				ui.indent("auto_update_options", |ui| {
+					ui.horizontal(|ui| {
+						ui.label(egui::RichText::new("after watching").color(text_color));
+						ui.add(
+							egui::DragValue::new(required_percent)
+								.range(1..=100)
+								.suffix("%"),
+						);
+						ui.label(egui::RichText::new("of an episode").color(text_color));
+					});
+
+					let mut wait_for_close = true;
+					ui.add_enabled(
+						false,
+						egui::Checkbox::new(&mut wait_for_close, "Wait for media player to close"),
+					)
+					.on_disabled_hover_text("Not configurable yet");
+				});
+			});
 		});
 	}
 }

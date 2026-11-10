@@ -314,6 +314,7 @@ mod tests {
 			id_mal: None,
 			title: Some(title),
 			episodes: None,
+			duration: None,
 			format: None,
 			season: None,
 			season_year: None,

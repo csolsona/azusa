@@ -1,6 +1,7 @@
 use std::{
 	collections::HashMap,
 	sync::{Arc, mpsc},
+	time::Instant,
 };
 
 use azusa_core::{
@@ -10,8 +11,8 @@ use azusa_core::{
 use eframe::egui;
 
 use crate::{
-	config::Config,
-	playback::{self, NowPlaying},
+	config::{Config, ProgressUpdate},
+	playback::{self, NowPlaying, watched_enough},
 	sync::{ListSync, ProgressChange, SyncEvent, SyncFailure, fetch_lists},
 	ui::{
 		anime_list, now_playing,
@@ -82,7 +83,7 @@ impl AzusaApp {
 		}
 
 		if let AuthState::LoggedIn(account) = &mut self.auth
-			&& let Some(status) = account.poll()
+			&& let Some(status) = account.poll(&self.config.playback.progress_update)
 		{
 			self.set_status(status);
 		}
@@ -282,7 +283,7 @@ impl Account {
 		}
 	}
 
-	fn poll(&mut self) -> Option<Status> {
+	fn poll(&mut self, progress_update_config: &ProgressUpdate) -> Option<Status> {
 		let status = match self.sync.poll() {
 			Some(SyncEvent::ProgressFailed(SyncFailure { error, lists })) => {
 				if let Some(lists) = lists {
@@ -301,9 +302,20 @@ impl Account {
 		};
 
 		if let Ok(file_name) = self.playback.try_recv() {
+			if let ProgressUpdate::Auto(auto_update) = progress_update_config
+				&& let Some(change) = self.finished_episode(auto_update.required_percent)
+			{
+				log::info!("auto progress update: {change:?}");
+				self.set_progress(change);
+			}
+
 			match file_name.and_then(|name| library::match_file(&self.lists, &name)) {
 				Some(file) => {
-					self.playing = Some(NowPlaying { file, open: true });
+					self.playing = Some(NowPlaying {
+						file,
+						open: true,
+						opened_at: Instant::now(),
+					});
 					self.view = View::NowPlaying;
 				}
 				None => {
@@ -344,6 +356,25 @@ impl Account {
 					.as_ref()
 					.is_some_and(|media| media.id == playing.file.media_id)
 			})
+	}
+
+	fn finished_episode(&self, required_percent: u8) -> Option<ProgressChange> {
+		let playing = self.playing.as_ref().filter(|playing| playing.open)?;
+		let entry = self.playing_entry()?;
+
+		let episode_duration_minutes = entry.media.as_ref().and_then(|media| media.duration);
+
+		let should_update = playing.is_next_episode(entry.progress)
+			&& watched_enough(
+				playing.opened_at.elapsed(),
+				episode_duration_minutes,
+				required_percent,
+			);
+
+		should_update.then_some(ProgressChange {
+			entry_id: entry.id,
+			progress: playing.file.episode,
+		})
 	}
 
 	fn anime_list_view(&mut self, ui: &mut egui::Ui, library: &LibraryState) {

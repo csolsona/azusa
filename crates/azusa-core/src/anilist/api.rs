@@ -70,6 +70,7 @@ pub struct Media {
 	pub id_mal: Option<i32>,
 	pub title: Option<MediaTitle>,
 	pub episodes: Option<i32>,
+	pub duration: Option<i32>,
 	pub format: Option<MediaFormat>,
 	pub season: Option<MediaSeason>,
 	pub season_year: Option<i32>,
